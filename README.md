@@ -1,123 +1,82 @@
-# Color Transfer Algorithm
+# ChromaMatch Lite
 
-This implementation follows the color transfer method described in "Color Transfer between Images" by Reinhard et al. The algorithm transfers color characteristics from a target image to a source image using statistical analysis in the LAB color space.
+ChromaMatch Lite is a browser-based lightweight tool for fast, accurate color matching.
+It maps color characteristics from a reference image onto a source image, then lets you fine-tune and analyze the result in real time.
 
-## Algorithm Overview
+## Why this name
 
-The color transfer process consists of four main steps:
+- ChromaMatch describes the core goal: matching color mood and distribution.
+- Lite emphasizes speed, simplicity, and low-friction usage in the browser.
 
-1. **RGB to LAB Conversion**: Convert both source and target images from RGB to LAB color space
-2. **Statistical Analysis**: Compute mean and standard deviation for each LAB channel
-3. **Color Transformation**: Apply the transformation formula to transfer color characteristics
-4. **Output Generation**: Convert back to RGB and visualize results
+## Key Features
 
-## Mathematical Foundation
+- Lightweight workflow:
+	- No framework build step
+	- Runs directly in the browser
+	- Fast slider-driven live updates
 
-The core transformation formula for each LAB channel is:
+- Multi-method transfer engine:
+	- Reinhard LAB
+	- LAB histogram matching
+	- RGB mean/std matching
+	- Auto method selection
+- Transfer strength control with live re-apply
+- Professional adjustment stack:
+	- Exposure, contrast, highlights, shadows, whites, blacks
+	- Temperature, tint, saturation
+- Windowed dashboard views:
+	- Three-Up (Original / Reference / Result)
+	- Original vs Result comparison slider
+	- Reference vs Result comparison slider
+- Granular analysis module:
+	- RGB and LAB histograms
+	- A*B* vectorgrams
+	- Live match analysis with overlap and percentile deltas
+	- Statistical comparison tables
+- Export tools:
+	- Quick export
+	- Full-quality export options
+	- LUT export
 
-```
-result = (source - μ_source) × (σ_target / σ_source) + μ_target
-```
+## Project Structure
 
-Where:
-- `μ` represents the mean
-- `σ` represents the standard deviation
-- The subscripts indicate source or target image statistics
+- `index.html`: app layout and controls
+- `styles.css`: dashboard, theme, and visualization styling
+- `src/ui/app.js`: app orchestration and event wiring
+- `src/engine/transfer/color-transfer.js`: transfer algorithms and method selection
+- `src/engine/adjustments/image-adjustments.js`: grading adjustments
+- `src/analysis/color-analysis.js`: visual analytics and match scoring
+- `src/export/export-manager.js`: export workflows
+- `src/export/lut-export.js`: LUT generation
 
-## Features
+## Run Locally
 
-- **Complete LAB Color Space Implementation**: Proper RGB↔LAB conversion
-- **Statistical Analysis**: Detailed computation of color distribution statistics
-- **Robust Transformation**: Handles edge cases like zero standard deviation
-- **Comprehensive Visualization**: Side-by-side comparison with color histograms
-- **Detailed Statistics**: Comparison of color characteristics before and after transfer
+This project is framework-free and intentionally lightweight.
+It runs directly in the browser.
 
-## Installation
+1. Open `index.html` in a modern browser.
+2. Upload source and reference images.
+3. Click Transfer Colors.
+4. Fine-tune in the right panel and inspect live analysis.
+
+Optional local server (recommended for consistent file handling):
 
 ```bash
-pip install -r requirements.txt
+python3 -m http.server 8080
 ```
 
-## Usage
+Then open `http://localhost:8080`.
 
-### Basic Usage with Synthetic Images
+## Workflow
 
-```python
-python color_transfer.py
-```
+1. Load source and reference images
+2. Choose transfer method and strength
+3. Refine color/tone sliders
+4. Validate with Match Analysis and Statistics tabs
+5. Export image or LUT
 
-This will run a demonstration with synthetic images and save the result as `color_transfer_result.png`.
+## Reference
 
-### Using with Your Own Images
-
-```python
-from color_transfer import ColorTransfer, load_and_resize_image
-
-# Initialize the color transfer object
-ct = ColorTransfer()
-
-# Load your images
-source_image = load_and_resize_image('path/to/source.jpg')
-target_image = load_and_resize_image('path/to/target.jpg')
-
-# Perform color transfer
-result = ct.transfer_colors(source_image, target_image)
-
-# Visualize results
-ct.visualize_results(source_image, target_image, result, 'my_result.png')
-
-# Print detailed statistics
-ct.print_statistics_comparison()
-```
-
-## Code Structure
-
-### ColorTransfer Class
-
-- `rgb_to_lab()`: Converts RGB images to LAB color space
-- `lab_to_rgb()`: Converts LAB images back to RGB color space
-- `compute_color_statistics()`: Calculates mean and standard deviation for each channel
-- `transfer_colors()`: Main algorithm implementation
-- `visualize_results()`: Creates comprehensive visualization
-- `print_statistics_comparison()`: Displays detailed statistical analysis
-
-### Utility Functions
-
-- `load_and_resize_image()`: Loads and optionally resizes images
-- `main()`: Demonstration function with synthetic images
-
-## Algorithm Details
-
-### LAB Color Space
-
-The LAB color space is perceptually uniform and separates:
-- **L**: Lightness (0-100)
-- **A**: Green-Red axis (-128 to +127)
-- **B**: Blue-Yellow axis (-128 to +127)
-
-### Statistical Transformation
-
-For each LAB channel, the algorithm:
-1. Subtracts the source mean (centering)
-2. Scales by the ratio of target/source standard deviations
-3. Adds the target mean (recentering)
-
-This preserves the spatial relationships while matching the color distribution.
-
-## Example Output
-
-The algorithm generates:
-- **Visual Comparison**: Source, target, and result images side by side
-- **Color Histograms**: RGB channel distributions for all three images
-- **Statistical Analysis**: Detailed numerical comparison of LAB statistics
-
-## Technical Notes
-
-- Images are automatically resized to a maximum dimension of 800 pixels for efficiency
-- The algorithm handles edge cases like zero standard deviation
-- OpenCV is used for robust color space conversions
-- Results are clipped to valid RGB ranges [0, 255]
-
-## References
-
-Reinhard, E., Adhikhmin, M., Gooch, B., & Shirley, P. (2001). Color transfer between images. IEEE Computer Graphics and Applications, 21(5), 34-41.
+Based on:
+Reinhard, E., Adhikhmin, M., Gooch, B., & Shirley, P. (2001).
+Color transfer between images. IEEE Computer Graphics and Applications, 21(5), 34-41.

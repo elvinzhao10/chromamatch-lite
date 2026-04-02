@@ -52,71 +52,137 @@ class LUTExport {
      * @returns {Object} Transformed RGB values
      */
     applyTransformations(r, g, b, colorTransfer, imageAdjustments) {
-        // Create a single pixel ImageData for processing
-        const canvas = document.createElement('canvas');
-        canvas.width = 1;
-        canvas.height = 1;
-        const ctx = canvas.getContext('2d');
-        
-        // Set pixel data
-        const imageData = ctx.createImageData(1, 1);
-        imageData.data[0] = Math.round(r * 255);
-        imageData.data[1] = Math.round(g * 255);
-        imageData.data[2] = Math.round(b * 255);
-        imageData.data[3] = 255;
-
-        // Apply color transfer if available
-        let processedData = imageData;
+        // Apply color transfer directly via LAB math — no DOM/canvas needed
         if (colorTransfer && colorTransfer.sourceStats && colorTransfer.targetStats) {
-            // Convert to LAB and apply color transfer
-            const labData = colorTransfer.rgbToLab(imageData);
-            
-            // Apply color transfer transformation
-            const sourceStats = colorTransfer.sourceStats;
-            const targetStats = colorTransfer.targetStats;
-            
-            for (let channel = 0; channel < 3; channel++) {
-                const sourceValue = labData[channel];
-                const sourceMean = sourceStats.mean[channel];
-                const sourceStd = sourceStats.std[channel];
-                const targetMean = targetStats.mean[channel];
-                const targetStd = targetStats.std[channel];
+            // RGB (0-1) → XYZ
+            let x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
+            let y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
+            let z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041;
 
-                if (sourceStd > 0) {
-                    labData[channel] = (sourceValue - sourceMean) * (targetStd / sourceStd) + targetMean;
+            x /= 0.95047; y /= 1.00000; z /= 1.08883;
+
+            // XYZ → LAB
+            const fx = x > 0.008856 ? Math.cbrt(x) : (7.787 * x + 16 / 116);
+            const fy = y > 0.008856 ? Math.cbrt(y) : (7.787 * y + 16 / 116);
+            const fz = z > 0.008856 ? Math.cbrt(z) : (7.787 * z + 16 / 116);
+
+            let L = 116 * fy - 16;
+            let A = 500 * (fx - fy);
+            let B = 200 * (fy - fz);
+
+            // Apply per-channel transfer stats
+            const ss = colorTransfer.sourceStats;
+            const ts = colorTransfer.targetStats;
+            const lab = [L, A, B];
+            for (let ch = 0; ch < 3; ch++) {
+                lab[ch] = ss.std[ch] > 0
+                    ? (lab[ch] - ss.mean[ch]) * (ts.std[ch] / ss.std[ch]) + ts.mean[ch]
+                    : ts.mean[ch];
+            }
+            [L, A, B] = lab;
+
+            // LAB → XYZ
+            const fy2 = (L + 16) / 116;
+            const fx2 = A / 500 + fy2;
+            const fz2 = fy2 - B / 200;
+
+            x = (fx2 > 0.206897 ? fx2 ** 3 : (fx2 - 16 / 116) / 7.787) * 0.95047;
+            y = (fy2 > 0.206897 ? fy2 ** 3 : (fy2 - 16 / 116) / 7.787) * 1.00000;
+            z = (fz2 > 0.206897 ? fz2 ** 3 : (fz2 - 16 / 116) / 7.787) * 1.08883;
+
+            // XYZ → RGB with gamma
+            r = x * 3.2404542 + y * -1.5371385 + z * -0.4985314;
+            g = x * -0.9692660 + y *  1.8760108 + z *  0.0415560;
+            b = x * 0.0556434  + y * -0.2040259 + z *  1.0572252;
+
+            r = r > 0.0031308 ? 1.055 * r ** (1 / 2.4) - 0.055 : 12.92 * r;
+            g = g > 0.0031308 ? 1.055 * g ** (1 / 2.4) - 0.055 : 12.92 * g;
+            b = b > 0.0031308 ? 1.055 * b ** (1 / 2.4) - 0.055 : 12.92 * b;
+
+            r = Math.max(0, Math.min(1, r));
+            g = Math.max(0, Math.min(1, g));
+            b = Math.max(0, Math.min(1, b));
+        }
+
+        // Apply image adjustments at pixel scale
+        if (imageAdjustments && imageAdjustments.currentAdjustments) {
+            const adj = imageAdjustments.currentAdjustments;
+            let rp = r * 255, gp = g * 255, bp = b * 255;
+
+            const tempFactor = adj.temperature / 100;
+            if (adj.temperature !== 0) {
+                if (tempFactor > 0) {
+                    rp = Math.min(255, rp + tempFactor * 30);
+                    bp = Math.max(0, bp - tempFactor * 20);
                 } else {
-                    labData[channel] = targetMean;
+                    rp = Math.max(0, rp + tempFactor * 20);
+                    bp = Math.min(255, bp - tempFactor * 30);
                 }
             }
 
-            // Convert back to RGB
-            processedData = colorTransfer.labToRgb(labData, 1, 1);
+            const tintFactor = adj.tint / 100;
+            if (adj.tint !== 0) {
+                rp = Math.max(0, Math.min(255, rp + tintFactor * 15));
+                gp = Math.max(0, Math.min(255, gp - tintFactor * 15));
+                bp = Math.max(0, Math.min(255, bp + tintFactor * 15));
+            }
+
+            if (adj.exposure !== 0) {
+                const expF = Math.pow(2, adj.exposure / 100);
+                rp = Math.min(255, rp * expF);
+                gp = Math.min(255, gp * expF);
+                bp = Math.min(255, bp * expF);
+            }
+
+            if (adj.contrast !== 0) {
+                const cF = (259 * (adj.contrast + 255)) / (255 * (259 - adj.contrast));
+                rp = Math.max(0, Math.min(255, cF * (rp - 128) + 128));
+                gp = Math.max(0, Math.min(255, cF * (gp - 128) + 128));
+                bp = Math.max(0, Math.min(255, cF * (bp - 128) + 128));
+            }
+
+            const lum = 0.299 * (rp / 255) + 0.587 * (gp / 255) + 0.114 * (bp / 255);
+            if (adj.highlights !== 0 && lum > 0.5) {
+                const a = (adj.highlights / 100) * (lum - 0.5) * 2 * 50;
+                rp = Math.max(0, Math.min(255, rp + a));
+                gp = Math.max(0, Math.min(255, gp + a));
+                bp = Math.max(0, Math.min(255, bp + a));
+            }
+            if (adj.shadows !== 0 && lum < 0.5) {
+                const a = (adj.shadows / 100) * (0.5 - lum) * 2 * 50;
+                rp = Math.max(0, Math.min(255, rp + a));
+                gp = Math.max(0, Math.min(255, gp + a));
+                bp = Math.max(0, Math.min(255, bp + a));
+            }
+            if (adj.whites !== 0 && lum > 0.8) {
+                const a = (adj.whites / 100) * (lum - 0.8) * 5 * 30;
+                rp = Math.max(0, Math.min(255, rp + a));
+                gp = Math.max(0, Math.min(255, gp + a));
+                bp = Math.max(0, Math.min(255, bp + a));
+            }
+            if (adj.blacks !== 0 && lum < 0.2) {
+                const a = (adj.blacks / 100) * (0.2 - lum) * 5 * 30;
+                rp = Math.max(0, Math.min(255, rp + a));
+                gp = Math.max(0, Math.min(255, gp + a));
+                bp = Math.max(0, Math.min(255, bp + a));
+            }
+            if (adj.saturation !== 0) {
+                const satF = (adj.saturation + 100) / 100;
+                const lum2 = 0.299 * (rp / 255) + 0.587 * (gp / 255) + 0.114 * (bp / 255);
+                rp = Math.max(0, Math.min(255, (lum2 + satF * (rp / 255 - lum2)) * 255));
+                gp = Math.max(0, Math.min(255, (lum2 + satF * (gp / 255 - lum2)) * 255));
+                bp = Math.max(0, Math.min(255, (lum2 + satF * (bp / 255 - lum2)) * 255));
+            }
+
+            r = rp / 255;
+            g = gp / 255;
+            b = bp / 255;
         }
 
-        // Apply image adjustments
-        if (imageAdjustments && imageAdjustments.currentAdjustments) {
-            const adjustedData = imageAdjustments.cloneImageData(processedData);
-            const adjustments = imageAdjustments.currentAdjustments;
-
-            // Apply each adjustment
-            if (adjustments.temperature !== 0) imageAdjustments.applyTemperature(adjustedData, adjustments.temperature);
-            if (adjustments.tint !== 0) imageAdjustments.applyTint(adjustedData, adjustments.tint);
-            if (adjustments.exposure !== 0) imageAdjustments.applyExposure(adjustedData, adjustments.exposure);
-            if (adjustments.contrast !== 0) imageAdjustments.applyContrast(adjustedData, adjustments.contrast);
-            if (adjustments.highlights !== 0) imageAdjustments.applyHighlights(adjustedData, adjustments.highlights);
-            if (adjustments.shadows !== 0) imageAdjustments.applyShadows(adjustedData, adjustments.shadows);
-            if (adjustments.whites !== 0) imageAdjustments.applyWhites(adjustedData, adjustments.whites);
-            if (adjustments.blacks !== 0) imageAdjustments.applyBlacks(adjustedData, adjustments.blacks);
-            if (adjustments.saturation !== 0) imageAdjustments.applySaturation(adjustedData, adjustments.saturation);
-
-            processedData = adjustedData;
-        }
-
-        // Return normalized RGB values
         return {
-            r: Math.max(0, Math.min(1, processedData.data[0] / 255)),
-            g: Math.max(0, Math.min(1, processedData.data[1] / 255)),
-            b: Math.max(0, Math.min(1, processedData.data[2] / 255))
+            r: Math.max(0, Math.min(1, r)),
+            g: Math.max(0, Math.min(1, g)),
+            b: Math.max(0, Math.min(1, b))
         };
     }
 

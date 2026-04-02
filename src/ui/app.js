@@ -11,10 +11,15 @@ let lutExport = new LUTExport();
 let exportManager = new ExportManager();
 let colorAnalysis = new ColorAnalysis();
 let originalResultData = null;
+let cachedSourceImageData = null;
+let cachedTargetImageData = null;
+let analysisUpdateTimer = null;
+let strengthDebounceTimer = null;
 
 // DOM elements
 const sourceInput = document.getElementById('sourceInput');
 const targetInput = document.getElementById('targetInput');
+const uploadSection = document.getElementById('uploadSection');
 const sourcePreview = document.getElementById('sourcePreview');
 const targetPreview = document.getElementById('targetPreview');
 const sourceImg = document.getElementById('sourceImg');
@@ -22,9 +27,19 @@ const targetImg = document.getElementById('targetImg');
 const processBtn = document.getElementById('processBtn');
 const statusMessage = document.getElementById('statusMessage');
 const resultsSection = document.getElementById('resultsSection');
+const themeToggle = document.getElementById('themeToggle');
 const originalCanvas = document.getElementById('originalCanvas');
 const referenceCanvas = document.getElementById('referenceCanvas');
 const resultCanvas = document.getElementById('resultCanvas');
+const compareOriginalResultBottom = document.getElementById('compareOriginalResultBottom');
+const compareOriginalResultTop = document.getElementById('compareOriginalResultTop');
+const compareOriginalResultSlider = document.getElementById('compareOriginalResultSlider');
+const compareReferenceResultBottom = document.getElementById('compareReferenceResultBottom');
+const compareReferenceResultTop = document.getElementById('compareReferenceResultTop');
+const compareReferenceResultSlider = document.getElementById('compareReferenceResultSlider');
+const resultWindowToggles = document.getElementById('resultWindowToggles');
+const toolLayerToggles = document.getElementById('toolLayerToggles');
+const changeImagesBtn = document.getElementById('changeImagesBtn');
 const statsGrid = document.getElementById('statsGrid');
 
 // Adjustment elements
@@ -49,6 +64,32 @@ const shadowsValue = document.getElementById('shadowsValue');
 const whitesValue = document.getElementById('whitesValue');
 const blacksValue = document.getElementById('blacksValue');
 const saturationValue = document.getElementById('saturationValue');
+const strengthSlider = document.getElementById('strengthSlider');
+const strengthValue = document.getElementById('strengthValue');
+const algorithmMethod = document.getElementById('algorithmMethod');
+const performanceMode = document.getElementById('performanceMode');
+const methodHint = document.getElementById('methodHint');
+
+function applyTheme(theme) {
+    document.body.setAttribute('data-theme', theme);
+    if (themeToggle) {
+        themeToggle.textContent = theme === 'dark' ? 'Light Mode' : 'Dark Mode';
+    }
+}
+
+function initializeTheme() {
+    const savedTheme = localStorage.getItem('color-transformer-theme');
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+    applyTheme(initialTheme);
+}
+
+function toggleTheme() {
+    const current = document.body.getAttribute('data-theme') || 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('color-transformer-theme', next);
+    applyTheme(next);
+}
 
 // Event listeners
 sourceInput.addEventListener('change', (e) => handleImageUpload(e, 'source'));
@@ -64,12 +105,116 @@ shadowsSlider.addEventListener('input', (e) => updateAdjustment('shadows', e.tar
 whitesSlider.addEventListener('input', (e) => updateAdjustment('whites', e.target.value));
 blacksSlider.addEventListener('input', (e) => updateAdjustment('blacks', e.target.value));
 saturationSlider.addEventListener('input', (e) => updateAdjustment('saturation', e.target.value));
-contrastSlider.addEventListener('input', updateSliderValue);
-saturationSlider.addEventListener('input', updateSliderValue);
+strengthSlider.addEventListener('input', (e) => updateStrength(e.target.value));
+algorithmMethod.addEventListener('change', () => {
+    updateMethodHint();
+    if (cachedSourceImageData) reapplyTransfer();
+});
+performanceMode.addEventListener('change', () => {
+    updateMethodHint();
+    if (cachedSourceImageData) reapplyTransfer();
+});
+compareOriginalResultSlider.addEventListener('input', () => {
+    redrawComparison(
+        compareOriginalResultBottom,
+        compareOriginalResultTop,
+        originalCanvas,
+        resultCanvas,
+        parseInt(compareOriginalResultSlider.value, 10)
+    );
+});
+compareReferenceResultSlider.addEventListener('input', () => {
+    redrawComparison(
+        compareReferenceResultBottom,
+        compareReferenceResultTop,
+        referenceCanvas,
+        resultCanvas,
+        parseInt(compareReferenceResultSlider.value, 10)
+    );
+});
 
-brightnessSlider.addEventListener('input', updatePreview);
-contrastSlider.addEventListener('input', updatePreview);
-saturationSlider.addEventListener('input', updatePreview);
+function updateMethodHint(result = null) {
+    const method = algorithmMethod.value;
+    const perf = performanceMode.value;
+    const baseHint = {
+        'reinhard-lab': 'Reinhard LAB: fast and natural global color transfer.',
+        'lab-histogram': 'LAB histogram matching: better tonal alignment, slower on large images.',
+        'rgb-mean-std': 'RGB mean/std: fastest option, less perceptual accuracy.',
+        'auto': 'Auto mode picks method from image size + performance setting.'
+    }[method];
+
+    const perfHint = {
+        fast: 'Fast mode uses heavier sampling for speed.',
+        balanced: 'Balanced mode provides good speed/quality tradeoff.',
+        quality: 'Quality mode uses dense sampling for better accuracy.'
+    }[perf];
+
+    const resolved = result?.method && result.method !== method
+        ? ` Active: ${result.method}.`
+        : '';
+
+    methodHint.textContent = `${baseHint} ${perfHint}${resolved}`;
+}
+
+function revertToImageSelection() {
+    if (uploadSection) {
+        uploadSection.style.display = 'block';
+    }
+    hideResults();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function setActiveDashboardWindow(windowId) {
+    document.querySelectorAll('.dashboard-window').forEach((panel) => {
+        panel.classList.toggle('active', panel.id === windowId);
+    });
+
+    if (resultWindowToggles) {
+        resultWindowToggles.querySelectorAll('.window-toggle').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.window === windowId);
+        });
+    }
+
+    updateComparisonViews();
+}
+
+function setActiveToolLayer(layerId) {
+    document.querySelectorAll('.tool-layer').forEach((layer) => {
+        layer.classList.toggle('active', layer.id === layerId);
+    });
+
+    if (toolLayerToggles) {
+        toolLayerToggles.querySelectorAll('.layer-toggle').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.layer === layerId);
+        });
+    }
+}
+
+function setupDashboardInteractions() {
+    if (resultWindowToggles) {
+        resultWindowToggles.addEventListener('click', (event) => {
+            const button = event.target.closest('.window-toggle');
+            if (!button) return;
+            setActiveDashboardWindow(button.dataset.window);
+        });
+    }
+
+    if (toolLayerToggles) {
+        toolLayerToggles.addEventListener('click', (event) => {
+            const button = event.target.closest('.layer-toggle');
+            if (!button) return;
+            setActiveToolLayer(button.dataset.layer);
+        });
+    }
+}
+
+function getTransferOptions() {
+    return {
+        strength: parseInt(strengthSlider.value, 10) / 100,
+        method: algorithmMethod.value,
+        performanceMode: performanceMode.value
+    };
+}
 
 /**
  * Handle image upload
@@ -121,6 +266,10 @@ function handleImageUpload(event, type) {
  * @param {string} type - 'source' or 'target'
  */
 function removeImage(type) {
+    if (uploadSection) {
+        uploadSection.style.display = 'block';
+    }
+
     if (type === 'source') {
         sourceImage = null;
         sourceInput.value = '';
@@ -193,10 +342,9 @@ async function processImages() {
         // Small delay to allow UI to update
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        // Resize images for processing (max 800px)
-        const maxSize = 800;
-        const sourceCanvas = resizeImage(sourceImage, maxSize);
-        const targetCanvas = resizeImage(targetImage, maxSize);
+        // Process at original image resolution
+        const sourceCanvas = resizeImage(sourceImage, Math.max(sourceImage.width, sourceImage.height));
+        const targetCanvas = resizeImage(targetImage, Math.max(targetImage.width, targetImage.height));
 
         // Get image data
         const sourceCtx = sourceCanvas.getContext('2d');
@@ -209,7 +357,11 @@ async function processImages() {
         showStatus('Applying color transfer algorithm...', 'processing');
         await new Promise(resolve => setTimeout(resolve, 50));
 
-        const result = colorTransfer.transferColors(sourceImageData, targetImageData);
+        cachedSourceImageData = sourceImageData;
+        cachedTargetImageData = targetImageData;
+
+        const result = colorTransfer.transferColors(sourceImageData, targetImageData, getTransferOptions());
+        updateMethodHint(result);
 
         // Display results
         displayResults(sourceImageData, targetImageData, result);
@@ -270,6 +422,7 @@ function displayResults(sourceData, targetData, result) {
     displayImageData(originalCanvas, sourceData);
     displayImageData(referenceCanvas, targetData);
     displayImageData(resultCanvas, result.imageData);
+    updateComparisonViews();
 
     // Generate comprehensive color analysis (includes statistics)
     generateColorAnalysisVisualization(sourceData, targetData, result.imageData);
@@ -277,9 +430,58 @@ function displayResults(sourceData, targetData, result) {
     // Show adjustments section
     adjustmentsSection.style.display = 'block';
 
+    // Reset to default dashboard windows/layers each new run.
+    setActiveDashboardWindow('windowThreeUp');
+    setActiveToolLayer('layerTransfer');
+
+    // Hide source/reference upload area until user explicitly reverts.
+    if (uploadSection) {
+        uploadSection.style.display = 'none';
+    }
+
     // Show results section
     resultsSection.style.display = 'block';
     resultsSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+function redrawComparison(bottomCanvas, topCanvas, leftCanvas, rightCanvas, splitPercent) {
+    if (!leftCanvas.width || !rightCanvas.width) return;
+
+    const width = Math.max(leftCanvas.width, rightCanvas.width);
+    const height = Math.max(leftCanvas.height, rightCanvas.height);
+
+    bottomCanvas.width = width;
+    bottomCanvas.height = height;
+    topCanvas.width = width;
+    topCanvas.height = height;
+
+    const bottomCtx = bottomCanvas.getContext('2d');
+    const topCtx = topCanvas.getContext('2d');
+    bottomCtx.clearRect(0, 0, width, height);
+    topCtx.clearRect(0, 0, width, height);
+
+    bottomCtx.drawImage(leftCanvas, 0, 0, width, height);
+    topCtx.drawImage(rightCanvas, 0, 0, width, height);
+
+    topCanvas.style.clipPath = `inset(0 0 0 ${splitPercent}%)`;
+}
+
+function updateComparisonViews() {
+    redrawComparison(
+        compareOriginalResultBottom,
+        compareOriginalResultTop,
+        originalCanvas,
+        resultCanvas,
+        parseInt(compareOriginalResultSlider.value, 10)
+    );
+
+    redrawComparison(
+        compareReferenceResultBottom,
+        compareReferenceResultTop,
+        referenceCanvas,
+        resultCanvas,
+        parseInt(compareReferenceResultSlider.value, 10)
+    );
 }
 
 /**
@@ -345,6 +547,8 @@ function hideResults() {
     resultsSection.style.display = 'none';
     adjustmentsSection.style.display = 'none';
     originalResultData = null;
+    cachedSourceImageData = null;
+    cachedTargetImageData = null;
     imageAdjustments.resetAdjustments();
 }
 
@@ -597,11 +801,66 @@ function updateAdjustment(adjustmentType, value) {
  */
 function applyAdjustmentsRealTime() {
     if (!originalResultData) return;
-    
+
     const adjustedImageData = imageAdjustments.applyAllAdjustments();
     if (adjustedImageData) {
         displayImageData(resultCanvas, adjustedImageData);
+        updateComparisonViews();
+        scheduleAnalysisUpdate();
     }
+}
+
+/**
+ * Re-run the core color transfer with the current strength, then apply adjustments
+ */
+function reapplyTransfer() {
+    if (!cachedSourceImageData || !cachedTargetImageData) return;
+
+    const result = colorTransfer.transferColors(cachedSourceImageData, cachedTargetImageData, getTransferOptions());
+    updateMethodHint(result);
+    originalResultData = result.imageData;
+    imageAdjustments.setOriginalImageData(result.imageData);
+    applyAdjustmentsRealTime();
+}
+
+/**
+ * Schedule a debounced live analysis update (150 ms after last slider event).
+ */
+function scheduleAnalysisUpdate() {
+    clearTimeout(analysisUpdateTimer);
+    analysisUpdateTimer = setTimeout(updateLiveAnalysis, 150);
+}
+
+/**
+ * Read the current result canvas and refresh histograms + suggestions.
+ */
+function updateLiveAnalysis() {
+    if (!resultCanvas.width || !colorAnalysis.cachedRefAnalysis) return;
+
+    // Downsample to 400px max for analysis speed
+    let analysisCanvas = resultCanvas;
+    const maxSize = 400;
+    if (resultCanvas.width > maxSize || resultCanvas.height > maxSize) {
+        const scale = maxSize / Math.max(resultCanvas.width, resultCanvas.height);
+        const w = Math.round(resultCanvas.width * scale);
+        const h = Math.round(resultCanvas.height * scale);
+        analysisCanvas = document.createElement('canvas');
+        analysisCanvas.width = w;
+        analysisCanvas.height = h;
+        analysisCanvas.getContext('2d').drawImage(resultCanvas, 0, 0, w, h);
+    }
+
+    const imageData = analysisCanvas.getContext('2d').getImageData(0, 0, analysisCanvas.width, analysisCanvas.height);
+    colorAnalysis.updateResultVisualization(imageData);
+}
+
+/**
+ * Update transfer strength and re-run color transfer (debounced 120 ms)
+ */
+function updateStrength(value) {
+    strengthValue.textContent = parseInt(value);
+    clearTimeout(strengthDebounceTimer);
+    strengthDebounceTimer = setTimeout(reapplyTransfer, 120);
 }
 
 /**
@@ -620,7 +879,8 @@ function resetAdjustments() {
     whitesSlider.value = 0;
     blacksSlider.value = 0;
     saturationSlider.value = 0;
-    
+    strengthSlider.value = 100;
+
     // Reset all value displays
     temperatureValue.textContent = '0';
     tintValue.textContent = '0';
@@ -631,12 +891,15 @@ function resetAdjustments() {
     whitesValue.textContent = '0';
     blacksValue.textContent = '0';
     saturationValue.textContent = '0';
-    
-    // Apply reset adjustments
-    if (originalResultData) {
-        applyAdjustmentsRealTime();
+    strengthValue.textContent = '100';
+
+    // Re-run transfer at full strength, then apply reset adjustments
+    if (cachedSourceImageData) {
+        reapplyTransfer();
     }
 }
+
+updateMethodHint();
 
 
 
@@ -712,7 +975,19 @@ async function exportLUT() {
 
 // Initialize drag and drop when page loads
 document.addEventListener('DOMContentLoaded', () => {
+    initializeTheme();
+    if (themeToggle) {
+        themeToggle.addEventListener('click', toggleTheme);
+    }
+
     setupDragAndDrop();
+    setupDashboardInteractions();
+    setActiveDashboardWindow('windowThreeUp');
+    setActiveToolLayer('layerTransfer');
+
+    if (changeImagesBtn) {
+        changeImagesBtn.addEventListener('click', revertToImageSelection);
+    }
     
     // Add event listeners for export dialog
     const exportFormat = document.getElementById('exportFormat');

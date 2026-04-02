@@ -251,19 +251,101 @@ class ImageAdjustments {
     applyAllAdjustments(adjustments = this.currentAdjustments) {
         if (!this.originalImageData) return null;
 
-        // Clone the original image data
         const adjustedImageData = this.cloneImageData(this.originalImageData);
+        const data = adjustedImageData.data;
 
-        // Apply adjustments in order
-        if (adjustments.temperature !== 0) this.applyTemperature(adjustedImageData, adjustments.temperature);
-        if (adjustments.tint !== 0) this.applyTint(adjustedImageData, adjustments.tint);
-        if (adjustments.exposure !== 0) this.applyExposure(adjustedImageData, adjustments.exposure);
-        if (adjustments.contrast !== 0) this.applyContrast(adjustedImageData, adjustments.contrast);
-        if (adjustments.highlights !== 0) this.applyHighlights(adjustedImageData, adjustments.highlights);
-        if (adjustments.shadows !== 0) this.applyShadows(adjustedImageData, adjustments.shadows);
-        if (adjustments.whites !== 0) this.applyWhites(adjustedImageData, adjustments.whites);
-        if (adjustments.blacks !== 0) this.applyBlacks(adjustedImageData, adjustments.blacks);
-        if (adjustments.saturation !== 0) this.applySaturation(adjustedImageData, adjustments.saturation);
+        // Pre-compute factors outside the loop
+        const tempFactor = adjustments.temperature / 100;
+        const tintFactor = adjustments.tint / 100;
+        const expFactor = adjustments.exposure !== 0 ? Math.pow(2, adjustments.exposure / 100) : 1;
+        const contFactor = adjustments.contrast !== 0
+            ? (259 * (adjustments.contrast + 255)) / (255 * (259 - adjustments.contrast))
+            : 1;
+        const highlightFactor = adjustments.highlights / 100;
+        const shadowFactor = adjustments.shadows / 100;
+        const whitesFactor = adjustments.whites / 100;
+        const blacksFactor = adjustments.blacks / 100;
+        const satFactor = (adjustments.saturation + 100) / 100;
+
+        for (let i = 0; i < data.length; i += 4) {
+            let r = data[i];
+            let g = data[i + 1];
+            let b = data[i + 2];
+
+            // Temperature
+            if (adjustments.temperature !== 0) {
+                if (tempFactor > 0) {
+                    r = Math.min(255, r + tempFactor * 30);
+                    b = Math.max(0, b - tempFactor * 20);
+                } else {
+                    r = Math.max(0, r + tempFactor * 20);
+                    b = Math.min(255, b - tempFactor * 30);
+                }
+            }
+
+            // Tint
+            if (adjustments.tint !== 0) {
+                r = Math.max(0, Math.min(255, r + tintFactor * 15));
+                g = Math.max(0, Math.min(255, g - tintFactor * 15));
+                b = Math.max(0, Math.min(255, b + tintFactor * 15));
+            }
+
+            // Exposure
+            if (adjustments.exposure !== 0) {
+                r = Math.min(255, r * expFactor);
+                g = Math.min(255, g * expFactor);
+                b = Math.min(255, b * expFactor);
+            }
+
+            // Contrast
+            if (adjustments.contrast !== 0) {
+                r = Math.max(0, Math.min(255, contFactor * (r - 128) + 128));
+                g = Math.max(0, Math.min(255, contFactor * (g - 128) + 128));
+                b = Math.max(0, Math.min(255, contFactor * (b - 128) + 128));
+            }
+
+            // Highlights, Shadows, Whites, Blacks — single luminance calculation
+            if (adjustments.highlights !== 0 || adjustments.shadows !== 0 ||
+                adjustments.whites !== 0 || adjustments.blacks !== 0) {
+                const lum = 0.299 * (r / 255) + 0.587 * (g / 255) + 0.114 * (b / 255);
+                if (adjustments.highlights !== 0 && lum > 0.5) {
+                    const adj = highlightFactor * (lum - 0.5) * 2 * 50;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
+                }
+                if (adjustments.shadows !== 0 && lum < 0.5) {
+                    const adj = shadowFactor * (0.5 - lum) * 2 * 50;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
+                }
+                if (adjustments.whites !== 0 && lum > 0.8) {
+                    const adj = whitesFactor * (lum - 0.8) * 5 * 30;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
+                }
+                if (adjustments.blacks !== 0 && lum < 0.2) {
+                    const adj = blacksFactor * (0.2 - lum) * 5 * 30;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
+                }
+            }
+
+            // Saturation
+            if (adjustments.saturation !== 0) {
+                const lum = 0.299 * (r / 255) + 0.587 * (g / 255) + 0.114 * (b / 255);
+                r = Math.max(0, Math.min(255, (lum + satFactor * (r / 255 - lum)) * 255));
+                g = Math.max(0, Math.min(255, (lum + satFactor * (g / 255 - lum)) * 255));
+                b = Math.max(0, Math.min(255, (lum + satFactor * (b / 255 - lum)) * 255));
+            }
+
+            data[i]     = r;
+            data[i + 1] = g;
+            data[i + 2] = b;
+        }
 
         return adjustedImageData;
     }

@@ -3,23 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Color Transfer Tool</title>
+    <title>ChromaMatch Lite</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Color Transfer Tool</h1>
-            <p>Transfer color characteristics from one image to another using the Reinhard et al. algorithm</p>
+        <header class="app-header">
+            <div class="header-row">
+                <div>
+                    <h1>ChromaMatch Lite</h1>
+                    <p class="app-brand-subtitle">A lightweight tool for fast, accurate color matching.</p>
+                </div>
+                <button id="themeToggle" class="theme-toggle-btn" type="button">Dark Mode</button>
+            </div>
         </header>
 
         <main>
             <!-- Upload Section -->
-            <section class="upload-section">
+            <section class="upload-section" id="uploadSection">
                 <div class="upload-container">
                     <div class="upload-box" id="sourceUpload">
                         <div class="upload-content">
-                            <div class="upload-icon">📷</div>
+                            <div class="upload-icon">SRC</div>
                             <h3>Source Image</h3>
                             <p>Upload the image you want to modify</p>
                             <input type="file" id="sourceInput" accept="image/*" hidden>
@@ -35,7 +40,7 @@
 
                     <div class="upload-box" id="targetUpload">
                         <div class="upload-content">
-                            <div class="upload-icon">🎨</div>
+                            <div class="upload-icon">REF</div>
                             <h3>Reference Image</h3>
                             <p>Upload the image with desired colors</p>
                             <input type="file" id="targetInput" accept="image/*" hidden>
@@ -61,119 +66,198 @@
 
             <!-- Results Section -->
             <section class="results-section" id="resultsSection" style="display: none;">
-                <h2>Results</h2>
-                <div class="results-container">
-                    <div class="result-item">
-                        <h3>Original</h3>
-                        <canvas id="originalCanvas"></canvas>
-                    </div>
-                    <div class="result-item">
-                        <h3>Reference</h3>
-                        <canvas id="referenceCanvas"></canvas>
-                    </div>
-                    <div class="result-item">
-                        <h3>Result</h3>
-                        <canvas id="resultCanvas"></canvas>
-                    </div>
+                <div class="results-header-row">
+                    <h2>Results</h2>
+                    <button type="button" class="change-images-btn" id="changeImagesBtn">Change Source / Reference</button>
                 </div>
-
-                <!-- Post-Processing Adjustments Section -->
-                <div class="adjustments-section" id="adjustmentsSection" style="display: none;">
-                    <h3>Fine-Tune Adjustments</h3>
-                    <div class="adjustments-container">
-                        <div class="adjustment-group">
-                            <h4>Color Balance</h4>
-                            <div class="slider-row">
-                                <label for="temperatureSlider">Temperature</label>
-                                <input type="range" id="temperatureSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="temperatureValue">0</span>
-                            </div>
-                            <div class="slider-row">
-                                <label for="tintSlider">Tint</label>
-                                <input type="range" id="tintSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="tintValue">0</span>
-                            </div>
-                            <div class="slider-row">
-                                <label for="saturationSlider">Saturation</label>
-                                <input type="range" id="saturationSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="saturationValue">0</span>
-                            </div>
+                <div class="dashboard-main">
+                    <div class="results-workspace">
+                        <div class="window-toggle-bar" id="resultWindowToggles">
+                            <button type="button" class="window-toggle active" data-window="windowThreeUp">Three-Up</button>
+                            <button type="button" class="window-toggle" data-window="windowOrigVsResult">Original vs Result</button>
+                            <button type="button" class="window-toggle" data-window="windowRefVsResult">Reference vs Result</button>
                         </div>
 
-                        <div class="adjustment-group">
-                            <h4>Exposure & Contrast</h4>
-                            <div class="slider-row">
-                                <label for="exposureSlider">Exposure</label>
-                                <input type="range" id="exposureSlider" min="-200" max="200" value="0" step="1">
-                                <span class="slider-value" id="exposureValue">0</span>
-                            </div>
-                            <div class="slider-row">
-                                <label for="contrastSlider">Contrast</label>
-                                <input type="range" id="contrastSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="contrastValue">0</span>
-                            </div>
-                        </div>
-
-                        <div class="adjustment-group">
-                            <h4>Tone Mapping</h4>
-                            <div class="slider-row">
-                                <label for="highlightsSlider">Highlights</label>
-                                <input type="range" id="highlightsSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="highlightsValue">0</span>
-                            </div>
-                            <div class="slider-row">
-                                <label for="shadowsSlider">Shadows</label>
-                                <input type="range" id="shadowsSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="shadowsValue">0</span>
-                            </div>
-                            <div class="slider-row">
-                                <label for="whitesSlider">Whites</label>
-                                <input type="range" id="whitesSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="whitesValue">0</span>
-                            </div>
-                            <div class="slider-row">
-                                <label for="blacksSlider">Blacks</label>
-                                <input type="range" id="blacksSlider" min="-100" max="100" value="0" step="1">
-                                <span class="slider-value" id="blacksValue">0</span>
-                            </div>
-                        </div>
-
-                        <div class="workflow-controls">
-                            <div class="control-group primary-actions">
-                                <h5>Export Options</h5>
-                                <div class="button-row">
-                                    <button class="quick-export-btn workflow-btn" onclick="quickExportResult()" title="Fast export with balanced quality">
-                                        <span class="btn-icon">⚡</span>
-                                        <span class="btn-text">Quick Export</span>
-                                    </button>
-                                    <button class="full-export-btn workflow-btn" onclick="showFullExportDialog()" title="Maximum quality export with full customization">
-                                        <span class="btn-icon">🎯</span>
-                                        <span class="btn-text">Full Quality Export</span>
-                                    </button>
+                        <section class="dashboard-window active" id="windowThreeUp">
+                            <div class="results-container">
+                                <div class="result-item">
+                                    <h3>Original</h3>
+                                    <canvas id="originalCanvas"></canvas>
+                                </div>
+                                <div class="result-item">
+                                    <h3>Reference</h3>
+                                    <canvas id="referenceCanvas"></canvas>
+                                </div>
+                                <div class="result-item">
+                                    <h3>Result</h3>
+                                    <canvas id="resultCanvas"></canvas>
                                 </div>
                             </div>
-                            
-                            <div class="control-group adjustment-actions">
-                                <h5>Adjustments</h5>
-                                <div class="button-row">
-                                    <button class="reset-btn workflow-btn" onclick="resetAdjustments()" title="Reset all adjustments to default">
-                                        <span class="btn-icon">↺</span>
-                                        <span class="btn-text">Reset All</span>
-                                    </button>
+                        </section>
+
+                        <section class="dashboard-window" id="windowOrigVsResult">
+                            <div class="comparison-grid single">
+                                <div class="comparison-card">
+                                    <h4>Original vs Result</h4>
+                                    <div class="comparison-stage">
+                                        <canvas id="compareOriginalResultBottom"></canvas>
+                                        <canvas id="compareOriginalResultTop"></canvas>
+                                    </div>
+                                    <input type="range" id="compareOriginalResultSlider" class="comparison-slider" min="0" max="100" value="50" step="1">
                                 </div>
                             </div>
-                            
-                            <div class="control-group professional-actions">
-                                <h5>Professional Tools</h5>
-                                <div class="button-row">
-                                    <button class="lut-btn workflow-btn" onclick="showLUTExportDialog()" title="Export lookup table for professional video/photo editing">
-                                        <span class="btn-icon">📊</span>
-                                        <span class="btn-text">Export LUT</span>
-                                    </button>
+                        </section>
+
+                        <section class="dashboard-window" id="windowRefVsResult">
+                            <div class="comparison-grid single">
+                                <div class="comparison-card">
+                                    <h4>Reference vs Result</h4>
+                                    <div class="comparison-stage">
+                                        <canvas id="compareReferenceResultBottom"></canvas>
+                                        <canvas id="compareReferenceResultTop"></canvas>
+                                    </div>
+                                    <input type="range" id="compareReferenceResultSlider" class="comparison-slider" min="0" max="100" value="50" step="1">
                                 </div>
                             </div>
-                        </div>
+                        </section>
                     </div>
+
+                    <!-- Post-Processing Adjustments Section -->
+                    <aside class="adjustments-section" id="adjustmentsSection" style="display: none;">
+                        <h3>Fine-Tune Adjustments</h3>
+                        <div class="tool-layer-toggles" id="toolLayerToggles">
+                            <button type="button" class="layer-toggle active" data-layer="layerTransfer">Transfer</button>
+                            <button type="button" class="layer-toggle" data-layer="layerColor">Color</button>
+                            <button type="button" class="layer-toggle" data-layer="layerTone">Tone</button>
+                            <button type="button" class="layer-toggle" data-layer="layerActions">Actions</button>
+                        </div>
+
+                        <div class="adjustments-container">
+                            <div class="tool-layer active" id="layerTransfer">
+                                <div class="adjustment-group">
+                                    <h4>Transfer Strength</h4>
+                                    <div class="slider-row">
+                                        <label for="strengthSlider">Strength</label>
+                                        <input type="range" id="strengthSlider" min="0" max="100" value="100" step="1">
+                                        <span class="slider-value" id="strengthValue">100</span>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="algorithmMethod">Method</label>
+                                        <select id="algorithmMethod">
+                                            <option value="reinhard-lab" selected>Reinhard LAB</option>
+                                            <option value="lab-histogram">LAB Histogram</option>
+                                            <option value="rgb-mean-std">RGB Mean/Std</option>
+                                            <option value="auto">Auto</option>
+                                        </select>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="performanceMode">Performance</label>
+                                        <select id="performanceMode">
+                                            <option value="fast">Fast</option>
+                                            <option value="balanced" selected>Balanced</option>
+                                            <option value="quality">Quality</option>
+                                        </select>
+                                    </div>
+                                    <p class="method-hint" id="methodHint">Balanced default for most images.</p>
+                                </div>
+                            </div>
+
+                            <div class="tool-layer" id="layerColor">
+                                <div class="adjustment-group">
+                                    <h4>Color Balance</h4>
+                                    <div class="slider-row">
+                                        <label for="temperatureSlider">Temperature</label>
+                                        <input type="range" id="temperatureSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="temperatureValue">0</span>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="tintSlider">Tint</label>
+                                        <input type="range" id="tintSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="tintValue">0</span>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="saturationSlider">Saturation</label>
+                                        <input type="range" id="saturationSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="saturationValue">0</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tool-layer" id="layerTone">
+                                <div class="adjustment-group">
+                                    <h4>Exposure & Contrast</h4>
+                                    <div class="slider-row">
+                                        <label for="exposureSlider">Exposure</label>
+                                        <input type="range" id="exposureSlider" min="-200" max="200" value="0" step="1">
+                                        <span class="slider-value" id="exposureValue">0</span>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="contrastSlider">Contrast</label>
+                                        <input type="range" id="contrastSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="contrastValue">0</span>
+                                    </div>
+                                </div>
+
+                                <div class="adjustment-group">
+                                    <h4>Tone Mapping</h4>
+                                    <div class="slider-row">
+                                        <label for="highlightsSlider">Highlights</label>
+                                        <input type="range" id="highlightsSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="highlightsValue">0</span>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="shadowsSlider">Shadows</label>
+                                        <input type="range" id="shadowsSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="shadowsValue">0</span>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="whitesSlider">Whites</label>
+                                        <input type="range" id="whitesSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="whitesValue">0</span>
+                                    </div>
+                                    <div class="slider-row">
+                                        <label for="blacksSlider">Blacks</label>
+                                        <input type="range" id="blacksSlider" min="-100" max="100" value="0" step="1">
+                                        <span class="slider-value" id="blacksValue">0</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tool-layer" id="layerActions">
+                                <div class="workflow-controls">
+                                    <div class="control-group primary-actions">
+                                        <h5>Export Options</h5>
+                                        <div class="button-row">
+                                            <button class="quick-export-btn workflow-btn" onclick="quickExportResult()" title="Fast export with balanced quality">
+                                                <span class="btn-text">Quick Export</span>
+                                            </button>
+                                            <button class="full-export-btn workflow-btn" onclick="showFullExportDialog()" title="Maximum quality export with full customization">
+                                                <span class="btn-text">Full Quality Export</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="control-group adjustment-actions">
+                                        <h5>Adjustments</h5>
+                                        <div class="button-row">
+                                            <button class="reset-btn workflow-btn" onclick="resetAdjustments()" title="Reset all adjustments to default">
+                                                <span class="btn-text">Reset All</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="control-group professional-actions">
+                                        <h5>Professional Tools</h5>
+                                        <div class="button-row">
+                                            <button class="lut-btn workflow-btn" onclick="showLUTExportDialog()" title="Export lookup table for professional video/photo editing">
+                                                <span class="btn-text">Export LUT</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
                 </div>
 
                 <!-- Unified Color Analysis Section -->
@@ -363,11 +447,11 @@
         </div>
     </div>
 
-    <script src="src/core/color-transfer.js"></script>
-    <script src="src/adjustments/image-adjustments.js"></script>
+    <script src="src/engine/transfer/color-transfer.js"></script>
+    <script src="src/engine/adjustments/image-adjustments.js"></script>
     <script src="src/export/lut-export.js"></script>
     <script src="src/export/export-manager.js"></script>
     <script src="src/analysis/color-analysis.js"></script>
-    <script src="src/app.js"></script>
+    <script src="src/ui/app.js"></script>
 </body>
 </html>

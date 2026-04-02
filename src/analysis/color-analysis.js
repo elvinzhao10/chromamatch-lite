@@ -8,6 +8,14 @@ class ColorAnalysis {
         this.histogramBins = 256;
         this.vectorgramSize = 200;
         this.canvasSize = { width: 300, height: 200 };
+        // Live-update state
+        this.resultCanvases = { rgb: null, lab: null, vectorgram: null, rgbComparison: null, labComparison: null };
+        this.suggestionsEl = null;
+        this.cachedRefAnalysis = null;
+        this.cachedOriginalAnalysis = null;
+        this.statsContainer = null;
+        this.matchSummaryContainer = null;
+        this.matchDetailsContainer = null;
     }
 
     /**
@@ -19,7 +27,7 @@ class ColorAnalysis {
     analyzeImage(imageData, label) {
         const rgbHistogram = this.calculateRGBHistogram(imageData);
         const labHistogram = this.calculateLABHistogram(imageData);
-        const colorStats = this.calculateColorStatistics(imageData);
+        const colorStats = this.calculateColorStatistics(imageData, rgbHistogram, labHistogram);
         const vectorgramData = this.calculateVectorgramData(imageData);
 
         return {
@@ -113,7 +121,7 @@ class ColorAnalysis {
      * @param {ImageData} imageData - Image data
      * @returns {Object} Color statistics
      */
-    calculateColorStatistics(imageData) {
+    calculateColorStatistics(imageData, rgbHistogram, labHistogram) {
         const data = imageData.data;
         const pixelCount = data.length / 4;
         
@@ -149,12 +157,45 @@ class ColorAnalysis {
         // Calculate LAB statistics
         const labData = this.rgbToLabArray(imageData);
         const labStats = this.calculateLabStatistics(labData);
+        const rgbPercentiles = {
+            r: this.calculatePercentilesFromHistogram(rgbHistogram.red, [0.1, 0.5, 0.9], 0, 255),
+            g: this.calculatePercentilesFromHistogram(rgbHistogram.green, [0.1, 0.5, 0.9], 0, 255),
+            b: this.calculatePercentilesFromHistogram(rgbHistogram.blue, [0.1, 0.5, 0.9], 0, 255),
+            luminance: this.calculatePercentilesFromHistogram(rgbHistogram.luminance, [0.1, 0.5, 0.9], 0, 255)
+        };
+        labStats.percentiles = [
+            this.calculatePercentilesFromHistogram(labHistogram.L, [0.1, 0.5, 0.9], 0, 100),
+            this.calculatePercentilesFromHistogram(labHistogram.A, [0.1, 0.5, 0.9], -128, 127),
+            this.calculatePercentilesFromHistogram(labHistogram.B, [0.1, 0.5, 0.9], -128, 127)
+        ];
 
         return {
-            rgb: { mean: rgbMean, std: rgbStd },
+            rgb: { mean: rgbMean, std: rgbStd, percentiles: rgbPercentiles },
             lab: labStats,
             pixelCount
         };
+    }
+
+    calculatePercentilesFromHistogram(histogram, percentiles, minValue, maxValue) {
+        const values = [];
+        let cumulative = 0;
+        let percentileIndex = 0;
+        const span = maxValue - minValue;
+
+        for (let i = 0; i < histogram.length && percentileIndex < percentiles.length; i++) {
+            cumulative += histogram[i];
+            while (percentileIndex < percentiles.length && cumulative >= percentiles[percentileIndex]) {
+                const mapped = minValue + (i / Math.max(1, histogram.length - 1)) * span;
+                values.push(mapped);
+                percentileIndex++;
+            }
+        }
+
+        while (values.length < percentiles.length) {
+            values.push(maxValue);
+        }
+
+        return values;
     }
 
     /**
@@ -541,11 +582,24 @@ class ColorAnalysis {
     createComprehensiveVisualization(originalAnalysis, referenceAnalysis, resultAnalysis, container) {
         container.innerHTML = '';
 
+        // Cache analyses for live updates
+        this.cachedOriginalAnalysis = originalAnalysis;
+        this.cachedRefAnalysis = referenceAnalysis;
+
         // Create main visualization container
         const vizContainer = document.createElement('div');
         vizContainer.className = 'color-visualization-container';
 
-        // Create tabs for different visualization types
+        // Suggestions panel — always visible above tabs, updates live
+        const suggestionsPanel = document.createElement('div');
+        suggestionsPanel.className = 'analysis-suggestions';
+        this.suggestionsEl = suggestionsPanel;
+        const initSuggestions = this.generateSuggestions(resultAnalysis.colorStats, referenceAnalysis.colorStats);
+        const initScore = this.computeMatchScore(resultAnalysis.colorStats, referenceAnalysis.colorStats);
+        this.renderSuggestions(suggestionsPanel, initSuggestions, initScore);
+        vizContainer.appendChild(suggestionsPanel);
+
+        // Tabs
         const tabContainer = document.createElement('div');
         tabContainer.className = 'viz-tabs';
         
@@ -553,6 +607,7 @@ class ColorAnalysis {
             { id: 'rgb-histograms', label: 'RGB Analysis', active: true },
             { id: 'lab-histograms', label: 'LAB Analysis', active: false },
             { id: 'vectorgrams', label: 'Color Distribution', active: false },
+            { id: 'match-analysis', label: 'Match Analysis', active: false },
             { id: 'statistics', label: 'Statistical Data', active: false }
         ];
 
@@ -570,6 +625,7 @@ class ColorAnalysis {
         this.createRGBHistogramView(vizContainer, originalAnalysis, referenceAnalysis, resultAnalysis);
         this.createLABHistogramView(vizContainer, originalAnalysis, referenceAnalysis, resultAnalysis);
         this.createVectorgramView(vizContainer, originalAnalysis, referenceAnalysis, resultAnalysis);
+        this.createMatchAnalysisView(vizContainer, originalAnalysis, referenceAnalysis, resultAnalysis);
         this.createStatisticsView(vizContainer, originalAnalysis, referenceAnalysis, resultAnalysis);
 
         container.appendChild(vizContainer);
@@ -599,7 +655,7 @@ class ColorAnalysis {
             { data: result, label: 'Result Image' }
         ];
 
-        analyses.forEach(analysis => {
+        analyses.forEach((analysis, index) => {
             const canvasWrapper = document.createElement('div');
             canvasWrapper.className = 'histogram-item';
 
@@ -607,6 +663,7 @@ class ColorAnalysis {
             this.renderRGBHistogram(canvas, analysis.data.rgbHistogram, analysis.label);
             canvasWrapper.appendChild(canvas);
 
+            if (index === 2) this.resultCanvases.rgb = canvas;
             canvasContainer.appendChild(canvasWrapper);
         });
 
@@ -636,7 +693,7 @@ class ColorAnalysis {
             { data: result, label: 'Result Image' }
         ];
 
-        analyses.forEach(analysis => {
+        analyses.forEach((analysis, index) => {
             const canvasWrapper = document.createElement('div');
             canvasWrapper.className = 'histogram-item';
 
@@ -644,6 +701,7 @@ class ColorAnalysis {
             this.renderLABHistogram(canvas, analysis.data.labHistogram, analysis.label);
             canvasWrapper.appendChild(canvas);
 
+            if (index === 2) this.resultCanvases.lab = canvas;
             canvasContainer.appendChild(canvasWrapper);
         });
 
@@ -678,7 +736,7 @@ class ColorAnalysis {
             { data: result, label: 'Result Image' }
         ];
 
-        analyses.forEach(analysis => {
+        analyses.forEach((analysis, index) => {
             const canvasWrapper = document.createElement('div');
             canvasWrapper.className = 'histogram-item';
 
@@ -686,6 +744,7 @@ class ColorAnalysis {
             this.renderVectorgram(canvas, analysis.data.vectorgramData, analysis.label);
             canvasWrapper.appendChild(canvas);
 
+            if (index === 2) this.resultCanvases.vectorgram = canvas;
             canvasContainer.appendChild(canvasWrapper);
         });
 
@@ -708,37 +767,109 @@ class ColorAnalysis {
 
         const statsContainer = document.createElement('div');
         statsContainer.className = 'stats-comparison-grid';
+        this.statsContainer = statsContainer;
 
-        // RGB Statistics
-        const rgbStats = document.createElement('div');
-        rgbStats.className = 'stats-section';
-        rgbStats.innerHTML = '<h5>RGB Statistics</h5>';
-        
-        const rgbTable = this.createStatsTable([
-            { label: 'Original', stats: original.colorStats.rgb },
-            { label: 'Reference', stats: reference.colorStats.rgb },
-            { label: 'Result', stats: result.colorStats.rgb }
-        ], 'rgb');
-        
-        rgbStats.appendChild(rgbTable);
-        statsContainer.appendChild(rgbStats);
-
-        // LAB Statistics
-        const labStats = document.createElement('div');
-        labStats.className = 'stats-section';
-        labStats.innerHTML = '<h5>LAB Statistics</h5>';
-        
-        const labTable = this.createStatsTable([
-            { label: 'Original', stats: original.colorStats.lab },
-            { label: 'Reference', stats: reference.colorStats.lab },
-            { label: 'Result', stats: result.colorStats.lab }
-        ], 'lab');
-        
-        labStats.appendChild(labTable);
-        statsContainer.appendChild(labStats);
+        this._buildStatsContent(statsContainer, original, reference, result);
 
         view.appendChild(statsContainer);
         container.appendChild(view);
+    }
+
+    createMatchAnalysisView(container, original, reference, result) {
+        const view = document.createElement('div');
+        view.id = 'match-analysis';
+        view.className = 'viz-content';
+        view.style.display = 'none';
+
+        const title = document.createElement('h4');
+        title.textContent = 'Granular Match Analysis';
+        view.appendChild(title);
+
+        const description = document.createElement('p');
+        description.className = 'viz-description';
+        description.textContent = 'These overlays and channel metrics compare the live result against the reference. They update as you move strength and fine-tune sliders.';
+        view.appendChild(description);
+
+        const summary = document.createElement('div');
+        summary.className = 'analysis-summary-grid';
+        this.matchSummaryContainer = summary;
+        view.appendChild(summary);
+
+        const compareGrid = document.createElement('div');
+        compareGrid.className = 'analysis-compare-grid';
+
+        const rgbCard = document.createElement('div');
+        rgbCard.className = 'analysis-compare-card';
+        const rgbCanvas = document.createElement('canvas');
+        this.resultCanvases.rgbComparison = rgbCanvas;
+        rgbCard.appendChild(rgbCanvas);
+        compareGrid.appendChild(rgbCard);
+
+        const labCard = document.createElement('div');
+        labCard.className = 'analysis-compare-card';
+        const labCanvas = document.createElement('canvas');
+        this.resultCanvases.labComparison = labCanvas;
+        labCard.appendChild(labCanvas);
+        compareGrid.appendChild(labCard);
+
+        view.appendChild(compareGrid);
+
+        const details = document.createElement('div');
+        details.className = 'analysis-detail-sections';
+        this.matchDetailsContainer = details;
+        view.appendChild(details);
+
+        const metrics = this.computeDistributionMetrics(result, reference);
+        this.renderMatchSummary(summary, metrics);
+        this.renderDistributionComparison(
+            rgbCanvas,
+            reference.rgbHistogram,
+            result.rgbHistogram,
+            [
+                { key: 'red', label: 'Red', color: '#e53e3e' },
+                { key: 'green', label: 'Green', color: '#38a169' },
+                { key: 'blue', label: 'Blue', color: '#3182ce' }
+            ],
+            'RGB Distribution Overlay'
+        );
+        this.renderDistributionComparison(
+            labCanvas,
+            reference.labHistogram,
+            result.labHistogram,
+            [
+                { key: 'L', label: 'L*', color: '#4a5568' },
+                { key: 'A', label: 'A*', color: '#d53f8c' },
+                { key: 'B', label: 'B*', color: '#dd6b20' }
+            ],
+            'LAB Distribution Overlay'
+        );
+        this.renderMatchDetails(details, metrics);
+
+        container.appendChild(view);
+    }
+
+    _buildStatsContent(statsContainer, original, reference, result) {
+        statsContainer.innerHTML = '';
+
+        const rgbStats = document.createElement('div');
+        rgbStats.className = 'stats-section';
+        rgbStats.innerHTML = '<h5>RGB Statistics</h5>';
+        rgbStats.appendChild(this.createStatsTable([
+            { label: 'Original', stats: original.colorStats.rgb },
+            { label: 'Reference', stats: reference.colorStats.rgb },
+            { label: 'Result', stats: result.colorStats.rgb }
+        ], 'rgb'));
+        statsContainer.appendChild(rgbStats);
+
+        const labStats = document.createElement('div');
+        labStats.className = 'stats-section';
+        labStats.innerHTML = '<h5>LAB Statistics</h5>';
+        labStats.appendChild(this.createStatsTable([
+            { label: 'Original', stats: original.colorStats.lab },
+            { label: 'Reference', stats: reference.colorStats.lab },
+            { label: 'Result', stats: result.colorStats.lab }
+        ], 'lab'));
+        statsContainer.appendChild(labStats);
     }
 
     /**
@@ -751,7 +882,7 @@ class ColorAnalysis {
         // Header
         const header = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        headerRow.innerHTML = '<th>Image</th><th>Channel</th><th>Mean</th><th>Std Dev</th>';
+        headerRow.innerHTML = '<th>Image</th><th>Channel</th><th>Mean</th><th>Std Dev</th><th>P10</th><th>P50</th><th>P90</th>';
         header.appendChild(headerRow);
         table.appendChild(header);
 
@@ -774,19 +905,31 @@ class ColorAnalysis {
                 
                 const meanCell = document.createElement('td');
                 const stdCell = document.createElement('td');
+                const p10Cell = document.createElement('td');
+                const p50Cell = document.createElement('td');
+                const p90Cell = document.createElement('td');
                 
                 if (type === 'rgb') {
                     meanCell.textContent = analysis.stats.mean[channel].toFixed(2);
                     stdCell.textContent = analysis.stats.std[channel].toFixed(2);
+                    p10Cell.textContent = analysis.stats.percentiles[channel][0].toFixed(1);
+                    p50Cell.textContent = analysis.stats.percentiles[channel][1].toFixed(1);
+                    p90Cell.textContent = analysis.stats.percentiles[channel][2].toFixed(1);
                 } else {
                     meanCell.textContent = analysis.stats.mean[channel].toFixed(2);
                     stdCell.textContent = analysis.stats.std[channel].toFixed(2);
+                    p10Cell.textContent = analysis.stats.percentiles[channel][0].toFixed(1);
+                    p50Cell.textContent = analysis.stats.percentiles[channel][1].toFixed(1);
+                    p90Cell.textContent = analysis.stats.percentiles[channel][2].toFixed(1);
                 }
                 
                 if (index === 0) row.appendChild(imageCell);
                 row.appendChild(channelCell);
                 row.appendChild(meanCell);
                 row.appendChild(stdCell);
+                row.appendChild(p10Cell);
+                row.appendChild(p50Cell);
+                row.appendChild(p90Cell);
                 
                 body.appendChild(row);
             });
@@ -794,6 +937,195 @@ class ColorAnalysis {
         
         table.appendChild(body);
         return table;
+    }
+
+    /**
+     * Live update — re-analyze result image and refresh all result-column visuals + suggestions.
+     * Called on every slider change (debounced in app.js).
+     */
+    updateResultVisualization(resultImageData) {
+        const resultAnalysis = this.analyzeImage(resultImageData, 'Result Image');
+
+        if (this.resultCanvases.rgb) {
+            this.renderRGBHistogram(this.resultCanvases.rgb, resultAnalysis.rgbHistogram, 'Result Image');
+        }
+        if (this.resultCanvases.lab) {
+            this.renderLABHistogram(this.resultCanvases.lab, resultAnalysis.labHistogram, 'Result Image');
+        }
+        if (this.resultCanvases.vectorgram) {
+            this.renderVectorgram(this.resultCanvases.vectorgram, resultAnalysis.vectorgramData, 'Result Image');
+        }
+        if (this.resultCanvases.rgbComparison && this.cachedRefAnalysis) {
+            this.renderDistributionComparison(
+                this.resultCanvases.rgbComparison,
+                this.cachedRefAnalysis.rgbHistogram,
+                resultAnalysis.rgbHistogram,
+                [
+                    { key: 'red', label: 'Red', color: '#e53e3e' },
+                    { key: 'green', label: 'Green', color: '#38a169' },
+                    { key: 'blue', label: 'Blue', color: '#3182ce' }
+                ],
+                'RGB Distribution Overlay'
+            );
+        }
+        if (this.resultCanvases.labComparison && this.cachedRefAnalysis) {
+            this.renderDistributionComparison(
+                this.resultCanvases.labComparison,
+                this.cachedRefAnalysis.labHistogram,
+                resultAnalysis.labHistogram,
+                [
+                    { key: 'L', label: 'L*', color: '#4a5568' },
+                    { key: 'A', label: 'A*', color: '#d53f8c' },
+                    { key: 'B', label: 'B*', color: '#dd6b20' }
+                ],
+                'LAB Distribution Overlay'
+            );
+        }
+        if (this.statsContainer && this.cachedOriginalAnalysis && this.cachedRefAnalysis) {
+            this._buildStatsContent(this.statsContainer, this.cachedOriginalAnalysis, this.cachedRefAnalysis, resultAnalysis);
+        }
+        if (this.matchSummaryContainer && this.matchDetailsContainer && this.cachedRefAnalysis) {
+            const metrics = this.computeDistributionMetrics(resultAnalysis, this.cachedRefAnalysis);
+            this.renderMatchSummary(this.matchSummaryContainer, metrics);
+            this.renderMatchDetails(this.matchDetailsContainer, metrics);
+        }
+        if (this.suggestionsEl && this.cachedRefAnalysis) {
+            const suggestions = this.generateSuggestions(resultAnalysis.colorStats, this.cachedRefAnalysis.colorStats);
+            const matchScore = this.computeMatchScore(resultAnalysis.colorStats, this.cachedRefAnalysis.colorStats);
+            this.renderSuggestions(this.suggestionsEl, suggestions, matchScore);
+        }
+    }
+
+    /**
+     * Compute a 0-100 match score between result and reference LAB stats.
+     */
+    computeMatchScore(resultStats, refStats) {
+        const lr = resultStats.lab, lf = refStats.lab;
+        const lDiff  = Math.abs(lr.mean[0] - lf.mean[0]);
+        const aDiff  = Math.abs(lr.mean[1] - lf.mean[1]);
+        const bDiff  = Math.abs(lr.mean[2] - lf.mean[2]);
+        const lsDiff = Math.abs(lr.std[0]  - lf.std[0]);
+        const err = (lDiff / 50 + aDiff / 30 + bDiff / 30 + lsDiff / 30) * 25;
+        return Math.max(0, Math.min(100, Math.round(100 - err)));
+    }
+
+    /**
+     * Derive concrete slider suggestions by comparing result vs reference LAB stats.
+     */
+    generateSuggestions(resultStats, refStats) {
+        const THRESHOLD = 1.5;
+        const lr = resultStats.lab, lf = refStats.lab;
+        const suggestions = [];
+
+        const lMeanDelta = lr.mean[0] - lf.mean[0];
+        const lStdDelta  = lr.std[0]  - lf.std[0];
+        const aMeanDelta = lr.mean[1] - lf.mean[1]; // A* = green(-) ↔ magenta(+)
+        const bMeanDelta = lr.mean[2] - lf.mean[2]; // B* = blue(-) ↔ yellow(+)
+
+        const resultChroma = Math.sqrt(lr.std[1] ** 2 + lr.std[2] ** 2);
+        const refChroma    = Math.sqrt(lf.std[1] ** 2 + lf.std[2] ** 2);
+        const chromaDelta  = resultChroma - refChroma;
+
+        if (Math.abs(lMeanDelta) > THRESHOLD) {
+            suggestions.push({
+                slider: 'exposure', label: 'Exposure',
+                direction: lMeanDelta > 0 ? 'decrease' : 'increase',
+                magnitude: Math.abs(lMeanDelta),
+                reason: `Result is ${Math.abs(lMeanDelta).toFixed(1)} L* ${lMeanDelta > 0 ? 'brighter' : 'darker'} than reference`
+            });
+        }
+
+        if (Math.abs(lStdDelta) > THRESHOLD) {
+            suggestions.push({
+                slider: 'contrast', label: 'Contrast',
+                direction: lStdDelta > 0 ? 'decrease' : 'increase',
+                magnitude: Math.abs(lStdDelta),
+                reason: `Result has ${lStdDelta > 0 ? 'more' : 'less'} tonal spread (Δ${Math.abs(lStdDelta).toFixed(1)} L* std)`
+            });
+        }
+
+        if (Math.abs(bMeanDelta) > THRESHOLD) {
+            suggestions.push({
+                slider: 'temperature', label: 'Temperature',
+                direction: bMeanDelta > 0 ? 'decrease' : 'increase',
+                magnitude: Math.abs(bMeanDelta),
+                reason: `Result B* is ${bMeanDelta > 0 ? 'too warm / yellow' : 'too cool / blue'} (Δ${Math.abs(bMeanDelta).toFixed(1)})`
+            });
+        }
+
+        if (Math.abs(aMeanDelta) > THRESHOLD) {
+            suggestions.push({
+                slider: 'tint', label: 'Tint',
+                direction: aMeanDelta > 0 ? 'decrease' : 'increase',
+                magnitude: Math.abs(aMeanDelta),
+                reason: `Result A* is ${aMeanDelta > 0 ? 'too magenta' : 'too green'} (Δ${Math.abs(aMeanDelta).toFixed(1)})`
+            });
+        }
+
+        if (Math.abs(chromaDelta) > THRESHOLD) {
+            suggestions.push({
+                slider: 'saturation', label: 'Saturation',
+                direction: chromaDelta > 0 ? 'decrease' : 'increase',
+                magnitude: Math.abs(chromaDelta),
+                reason: `Result is ${chromaDelta > 0 ? 'over' : 'under'}saturated by ${Math.abs(chromaDelta).toFixed(1)}`
+            });
+        }
+
+        // Sort largest delta first
+        suggestions.sort((a, b) => b.magnitude - a.magnitude);
+        return suggestions;
+    }
+
+    /**
+     * Render the suggestions panel with match score and per-slider cards.
+     */
+    renderSuggestions(container, suggestions, matchScore) {
+        const scoreColor = matchScore >= 80 ? '#48bb78' : matchScore >= 55 ? '#ed8936' : '#f56565';
+
+        container.innerHTML = `
+            <div class="suggestions-header">
+                <h4>Match Analysis</h4>
+                <div class="match-score-badge" style="background: ${scoreColor}">
+                    <span class="match-score-number">${matchScore}</span><span class="match-score-label">%</span>
+                </div>
+            </div>
+        `;
+
+        if (suggestions.length === 0) {
+            const ok = document.createElement('p');
+            ok.className = 'suggestions-all-good';
+            ok.textContent = 'Excellent match — no further adjustments needed.';
+            container.appendChild(ok);
+            return;
+        }
+
+        const cardsEl = document.createElement('div');
+        cardsEl.className = 'suggestion-cards';
+
+        for (const sug of suggestions) {
+            const card = document.createElement('div');
+            card.className = `suggestion-card ${sug.direction}`;
+
+            const arrow = sug.direction === 'increase' ? '↑' : '↓';
+            const magnitudeLabel = sug.magnitude > 10 ? 'Large' : sug.magnitude > 4 ? 'Moderate' : 'Small';
+            const magnitudeClass = sug.magnitude > 10 ? 'high' : sug.magnitude > 4 ? 'medium' : 'low';
+            const barPct = Math.min(100, (sug.magnitude / 20) * 100);
+
+            card.innerHTML = `
+                <div class="suggestion-card-header">
+                    <span class="suggestion-arrow">${arrow}</span>
+                    <span class="suggestion-slider-name">${sug.label}</span>
+                    <span class="suggestion-magnitude-badge ${magnitudeClass}">${magnitudeLabel}</span>
+                </div>
+                <p class="suggestion-reason">${sug.reason}</p>
+                <div class="suggestion-bar-track">
+                    <div class="suggestion-bar-fill" style="width: ${barPct}%"></div>
+                </div>
+            `;
+            cardsEl.appendChild(card);
+        }
+
+        container.appendChild(cardsEl);
     }
 
     /**
@@ -817,8 +1149,213 @@ class ColorAnalysis {
      * Get tab index for switching
      */
     getTabIndex(tabId) {
-        const tabIds = ['rgb-histograms', 'lab-histograms', 'vectorgrams', 'statistics'];
+        const tabIds = ['rgb-histograms', 'lab-histograms', 'vectorgrams', 'match-analysis', 'statistics'];
         return tabIds.indexOf(tabId) + 1;
+    }
+
+    computeDistributionMetrics(resultAnalysis, referenceAnalysis) {
+        const rgbChannels = [
+            this.buildRgbChannelMetric('Red', 'r', 'red', resultAnalysis, referenceAnalysis),
+            this.buildRgbChannelMetric('Green', 'g', 'green', resultAnalysis, referenceAnalysis),
+            this.buildRgbChannelMetric('Blue', 'b', 'blue', resultAnalysis, referenceAnalysis)
+        ];
+
+        const labChannels = [
+            this.buildLabChannelMetric('L*', 0, 'L', resultAnalysis, referenceAnalysis),
+            this.buildLabChannelMetric('A*', 1, 'A', resultAnalysis, referenceAnalysis),
+            this.buildLabChannelMetric('B*', 2, 'B', resultAnalysis, referenceAnalysis)
+        ];
+
+        const rgbOverlap = rgbChannels.reduce((sum, channel) => sum + channel.overlap, 0) / rgbChannels.length;
+        const labOverlap = labChannels.reduce((sum, channel) => sum + channel.overlap, 0) / labChannels.length;
+        const luminanceOverlap = this.calculateHistogramOverlap(
+            resultAnalysis.rgbHistogram.luminance,
+            referenceAnalysis.rgbHistogram.luminance
+        );
+
+        const resultChroma = Math.sqrt(resultAnalysis.colorStats.lab.std[1] ** 2 + resultAnalysis.colorStats.lab.std[2] ** 2);
+        const refChroma = Math.sqrt(referenceAnalysis.colorStats.lab.std[1] ** 2 + referenceAnalysis.colorStats.lab.std[2] ** 2);
+
+        return {
+            score: this.computeMatchScore(resultAnalysis.colorStats, referenceAnalysis.colorStats),
+            rgbOverlap,
+            labOverlap,
+            luminanceOverlap,
+            chromaSpreadDelta: resultChroma - refChroma,
+            rgbChannels,
+            labChannels
+        };
+    }
+
+    buildRgbChannelMetric(label, statsKey, histogramKey, resultAnalysis, referenceAnalysis) {
+        const resultStats = resultAnalysis.colorStats.rgb;
+        const referenceStats = referenceAnalysis.colorStats.rgb;
+        return {
+            label,
+            overlap: this.calculateHistogramOverlap(resultAnalysis.rgbHistogram[histogramKey], referenceAnalysis.rgbHistogram[histogramKey]),
+            resultMean: resultStats.mean[statsKey],
+            referenceMean: referenceStats.mean[statsKey],
+            meanDelta: resultStats.mean[statsKey] - referenceStats.mean[statsKey],
+            resultStd: resultStats.std[statsKey],
+            referenceStd: referenceStats.std[statsKey],
+            stdDelta: resultStats.std[statsKey] - referenceStats.std[statsKey],
+            resultPercentiles: resultStats.percentiles[statsKey],
+            referencePercentiles: referenceStats.percentiles[statsKey]
+        };
+    }
+
+    buildLabChannelMetric(label, index, histogramKey, resultAnalysis, referenceAnalysis) {
+        const resultStats = resultAnalysis.colorStats.lab;
+        const referenceStats = referenceAnalysis.colorStats.lab;
+        return {
+            label,
+            overlap: this.calculateHistogramOverlap(resultAnalysis.labHistogram[histogramKey], referenceAnalysis.labHistogram[histogramKey]),
+            resultMean: resultStats.mean[index],
+            referenceMean: referenceStats.mean[index],
+            meanDelta: resultStats.mean[index] - referenceStats.mean[index],
+            resultStd: resultStats.std[index],
+            referenceStd: referenceStats.std[index],
+            stdDelta: resultStats.std[index] - referenceStats.std[index],
+            resultPercentiles: resultStats.percentiles[index],
+            referencePercentiles: referenceStats.percentiles[index]
+        };
+    }
+
+    calculateHistogramOverlap(resultHistogram, referenceHistogram) {
+        let overlap = 0;
+        for (let i = 0; i < resultHistogram.length; i++) {
+            overlap += Math.min(resultHistogram[i], referenceHistogram[i]);
+        }
+        return overlap * 100;
+    }
+
+    renderMatchSummary(container, metrics) {
+        const cards = [
+            { label: 'Overall Match', value: `${metrics.score}%`, tone: metrics.score >= 80 ? 'good' : metrics.score >= 55 ? 'mid' : 'warn' },
+            { label: 'RGB Overlap', value: `${metrics.rgbOverlap.toFixed(1)}%`, tone: metrics.rgbOverlap >= 80 ? 'good' : metrics.rgbOverlap >= 60 ? 'mid' : 'warn' },
+            { label: 'LAB Overlap', value: `${metrics.labOverlap.toFixed(1)}%`, tone: metrics.labOverlap >= 80 ? 'good' : metrics.labOverlap >= 60 ? 'mid' : 'warn' },
+            { label: 'Luma Overlap', value: `${metrics.luminanceOverlap.toFixed(1)}%`, tone: metrics.luminanceOverlap >= 80 ? 'good' : metrics.luminanceOverlap >= 60 ? 'mid' : 'warn' },
+            { label: 'Chroma Spread Δ', value: `${metrics.chromaSpreadDelta > 0 ? '+' : ''}${metrics.chromaSpreadDelta.toFixed(2)}`, tone: Math.abs(metrics.chromaSpreadDelta) <= 2 ? 'good' : Math.abs(metrics.chromaSpreadDelta) <= 5 ? 'mid' : 'warn' }
+        ];
+
+        container.innerHTML = '';
+        cards.forEach(card => {
+            const el = document.createElement('div');
+            el.className = `analysis-summary-card ${card.tone}`;
+            el.innerHTML = `<span class="analysis-summary-label">${card.label}</span><strong class="analysis-summary-value">${card.value}</strong>`;
+            container.appendChild(el);
+        });
+    }
+
+    renderMatchDetails(container, metrics) {
+        container.innerHTML = '';
+        container.appendChild(this.createChannelMetricSection('RGB Channel Match', metrics.rgbChannels));
+        container.appendChild(this.createChannelMetricSection('LAB Channel Match', metrics.labChannels));
+    }
+
+    createChannelMetricSection(title, channels) {
+        const section = document.createElement('div');
+        section.className = 'analysis-detail-card';
+
+        const heading = document.createElement('h5');
+        heading.textContent = title;
+        section.appendChild(heading);
+
+        const tableWrap = document.createElement('div');
+        tableWrap.className = 'analysis-detail-table-wrap';
+
+        const table = document.createElement('table');
+        table.className = 'analysis-detail-table';
+        table.innerHTML = '<thead><tr><th>Channel</th><th>Overlap</th><th>Mean Δ</th><th>Std Δ</th><th>P10 Δ</th><th>P50 Δ</th><th>P90 Δ</th></tr></thead>';
+
+        const body = document.createElement('tbody');
+        channels.forEach(channel => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${channel.label}</td>
+                <td>${channel.overlap.toFixed(1)}%</td>
+                <td>${channel.meanDelta > 0 ? '+' : ''}${channel.meanDelta.toFixed(2)}</td>
+                <td>${channel.stdDelta > 0 ? '+' : ''}${channel.stdDelta.toFixed(2)}</td>
+                <td>${(channel.resultPercentiles[0] - channel.referencePercentiles[0]).toFixed(2)}</td>
+                <td>${(channel.resultPercentiles[1] - channel.referencePercentiles[1]).toFixed(2)}</td>
+                <td>${(channel.resultPercentiles[2] - channel.referencePercentiles[2]).toFixed(2)}</td>
+            `;
+            body.appendChild(row);
+        });
+
+        table.appendChild(body);
+        tableWrap.appendChild(table);
+        section.appendChild(tableWrap);
+        return section;
+    }
+
+    renderDistributionComparison(canvas, referenceHistogram, resultHistogram, channels, title) {
+        const ctx = canvas.getContext('2d');
+        const width = 420;
+        const height = 220;
+        const margin = { top: 32, right: 16, bottom: 28, left: 34 };
+        const chartWidth = width - margin.left - margin.right;
+        const chartHeight = height - margin.top - margin.bottom;
+
+        canvas.width = width;
+        canvas.height = height;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+
+        let maxValue = 0;
+        channels.forEach(channel => {
+            maxValue = Math.max(maxValue, Math.max(...referenceHistogram[channel.key]), Math.max(...resultHistogram[channel.key]));
+        });
+        maxValue = Math.max(maxValue, 1e-6);
+
+        ctx.strokeStyle = '#cbd5e0';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(margin.left, margin.top);
+        ctx.lineTo(margin.left, height - margin.bottom);
+        ctx.lineTo(width - margin.right, height - margin.bottom);
+        ctx.stroke();
+
+        channels.forEach(channel => {
+            this.drawDistributionLine(ctx, referenceHistogram[channel.key], channel.color, chartWidth, chartHeight, margin, height, maxValue, [5, 4], 0.5);
+            this.drawDistributionLine(ctx, resultHistogram[channel.key], channel.color, chartWidth, chartHeight, margin, height, maxValue, [], 0.95);
+        });
+
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#2d3748';
+        ctx.font = 'bold 13px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(title, width / 2, 18);
+
+        ctx.font = '11px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText('Dashed: Reference', margin.left, height - 8);
+        ctx.textAlign = 'right';
+        ctx.fillText('Solid: Live Result', width - margin.right, height - 8);
+    }
+
+    drawDistributionLine(ctx, histogram, color, chartWidth, chartHeight, margin, height, maxValue, dash, alpha) {
+        const binWidth = chartWidth / Math.max(1, histogram.length - 1);
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.6;
+        ctx.globalAlpha = alpha;
+        ctx.setLineDash(dash);
+
+        histogram.forEach((value, index) => {
+            const x = margin.left + index * binWidth;
+            const y = height - margin.bottom - (value / maxValue) * chartHeight;
+            if (index === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+
+        ctx.stroke();
+        ctx.restore();
     }
 }
 
