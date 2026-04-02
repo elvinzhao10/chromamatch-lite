@@ -3,11 +3,6 @@
 ChromaMatch Lite is a browser-based lightweight tool for fast, accurate color matching.
 It maps color characteristics from a reference image onto a source image, then lets you fine-tune and analyze the result in real time.
 
-## Why this name
-
-- ChromaMatch describes the core goal: matching color mood and distribution.
-- Lite emphasizes speed, simplicity, and low-friction usage in the browser.
-
 ## Key Features
 
 - Lightweight workflow:
