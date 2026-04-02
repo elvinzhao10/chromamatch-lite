@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Color Transfer Tool</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Color Transfer Tool</h1>
+            <p>Transfer color characteristics from one image to another using the Reinhard et al. algorithm</p>
+        </header>
+
+        <main>
+            <!-- Upload Section -->
+            <section class="upload-section">
+                <div class="upload-container">
+                    <div class="upload-box" id="sourceUpload">
+                        <div class="upload-content">
+                            <div class="upload-icon">📷</div>
+                            <h3>Source Image</h3>
+                            <p>Upload the image you want to modify</p>
+                            <input type="file" id="sourceInput" accept="image/*" hidden>
+                            <button class="upload-btn" onclick="document.getElementById('sourceInput').click()">
+                                Choose File
+                            </button>
+                        </div>
+                        <div class="image-preview" id="sourcePreview" style="display: none;">
+                            <img id="sourceImg" alt="Source image">
+                            <button class="remove-btn" onclick="removeImage('source')">&times;</button>
+                        </div>
+                    </div>
+
+                    <div class="upload-box" id="targetUpload">
+                        <div class="upload-content">
+                            <div class="upload-icon">🎨</div>
+                            <h3>Reference Image</h3>
+                            <p>Upload the image with desired colors</p>
+                            <input type="file" id="targetInput" accept="image/*" hidden>
+                            <button class="upload-btn" onclick="document.getElementById('targetInput').click()">
+                                Choose File
+                            </button>
+                        </div>
+                        <div class="image-preview" id="targetPreview" style="display: none;">
+                            <img id="targetImg" alt="Target image">
+                            <button class="remove-btn" onclick="removeImage('target')">&times;</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="process-section">
+                    <button id="processBtn" class="process-btn" disabled onclick="processImages()">
+                        <span class="btn-text">Transfer Colors</span>
+                        <div class="spinner" style="display: none;"></div>
+                    </button>
+                    <div class="status-message" id="statusMessage"></div>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <h2>Results</h2>
+                <div class="results-container">
+                    <div class="result-item">
+                        <h3>Original</h3>
+                        <canvas id="originalCanvas"></canvas>
+                    </div>
+                    <div class="result-item">
+                        <h3>Reference</h3>
+                        <canvas id="referenceCanvas"></canvas>
+                    </div>
+                    <div class="result-item">
+                        <h3>Result</h3>
+                        <canvas id="resultCanvas"></canvas>
+                    </div>
+                </div>
+
+                <!-- Post-Processing Adjustments Section -->
+                <div class="adjustments-section" id="adjustmentsSection" style="display: none;">
+                    <h3>Fine-Tune Adjustments</h3>
+                    <div class="adjustments-container">
+                        <div class="adjustment-group">
+                            <h4>Color Balance</h4>
+                            <div class="slider-row">
+                                <label for="temperatureSlider">Temperature</label>
+                                <input type="range" id="temperatureSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="temperatureValue">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="tintSlider">Tint</label>
+                                <input type="range" id="tintSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="tintValue">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="saturationSlider">Saturation</label>
+                                <input type="range" id="saturationSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="saturationValue">0</span>
+                            </div>
+                        </div>
+
+                        <div class="adjustment-group">
+                            <h4>Exposure & Contrast</h4>
+                            <div class="slider-row">
+                                <label for="exposureSlider">Exposure</label>
+                                <input type="range" id="exposureSlider" min="-200" max="200" value="0" step="1">
+                                <span class="slider-value" id="exposureValue">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="contrastSlider">Contrast</label>
+                                <input type="range" id="contrastSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="contrastValue">0</span>
+                            </div>
+                        </div>
+
+                        <div class="adjustment-group">
+                            <h4>Tone Mapping</h4>
+                            <div class="slider-row">
+                                <label for="highlightsSlider">Highlights</label>
+                                <input type="range" id="highlightsSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="highlightsValue">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="shadowsSlider">Shadows</label>
+                                <input type="range" id="shadowsSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="shadowsValue">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="whitesSlider">Whites</label>
+                                <input type="range" id="whitesSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="whitesValue">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="blacksSlider">Blacks</label>
+                                <input type="range" id="blacksSlider" min="-100" max="100" value="0" step="1">
+                                <span class="slider-value" id="blacksValue">0</span>
+                            </div>
+                        </div>
+
+                        <div class="workflow-controls">
+                            <div class="control-group primary-actions">
+                                <h5>Export Options</h5>
+                                <div class="button-row">
+                                    <button class="quick-export-btn workflow-btn" onclick="quickExportResult()" title="Fast export with balanced quality">
+                                        <span class="btn-icon">⚡</span>
+                                        <span class="btn-text">Quick Export</span>
+                                    </button>
+                                    <button class="full-export-btn workflow-btn" onclick="showFullExportDialog()" title="Maximum quality export with full customization">
+                                        <span class="btn-icon">🎯</span>
+                                        <span class="btn-text">Full Quality Export</span>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="control-group adjustment-actions">
+                                <h5>Adjustments</h5>
+                                <div class="button-row">
+                                    <button class="reset-btn workflow-btn" onclick="resetAdjustments()" title="Reset all adjustments to default">
+                                        <span class="btn-icon">↺</span>
+                                        <span class="btn-text">Reset All</span>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="control-group professional-actions">
+                                <h5>Professional Tools</h5>
+                                <div class="button-row">
+                                    <button class="lut-btn workflow-btn" onclick="showLUTExportDialog()" title="Export lookup table for professional video/photo editing">
+                                        <span class="btn-icon">📊</span>
+                                        <span class="btn-text">Export LUT</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Unified Color Analysis Section -->
+                <div class="unified-analysis-section" id="unifiedAnalysisSection">
+                    <h3>Color Analysis & Statistical Comparison</h3>
+                    <div id="colorVisualizationContainer"></div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Based on "Color Transfer between Images" by Reinhard et al.</p>
+        </footer>
+    </div>
+
+    <!-- Full Quality Export Dialog -->
+    <div class="modal-overlay" id="fullExportModal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Full Quality Export Settings</h3>
+                <button class="modal-close" onclick="closeFullExportDialog()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="export-options">
+                    <div class="option-group">
+                        <label for="exportFormat">File Format:</label>
+                        <select id="exportFormat" onchange="updateExportPreview()">
+                            <option value="png">PNG (Lossless, larger file)</option>
+                            <option value="jpeg">JPEG (High quality, smaller file)</option>
+                            <option value="webp">WebP (Modern, efficient)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group" id="qualityGroup">
+                        <label for="exportQuality">Quality:</label>
+                        <input type="range" id="exportQuality" min="0.5" max="1.0" step="0.05" value="0.95" onchange="updateExportPreview()">
+                        <span class="slider-value" id="qualityValue">95%</span>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="exportResolution">Resolution:</label>
+                        <select id="exportResolution" onchange="updateExportPreview()">
+                            <option value="original">Original Size</option>
+                            <option value="hd">HD (1920x1080)</option>
+                            <option value="4k">4K (3840x2160)</option>
+                            <option value="print300">Print Quality (300 DPI)</option>
+                            <option value="web72">Web Optimized (72 DPI)</option>
+                            <option value="custom">Custom Size</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group" id="customSizeGroup" style="display: none;">
+                        <label>Custom Dimensions:</label>
+                        <div class="custom-size-inputs">
+                            <input type="number" id="customWidth" placeholder="Width" min="1" max="8192" onchange="updateExportPreview()">
+                            <span>×</span>
+                            <input type="number" id="customHeight" placeholder="Height" min="1" max="8192" onchange="updateExportPreview()">
+                        </div>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="colorProfile">Color Profile:</label>
+                        <select id="colorProfile" onchange="updateExportPreview()">
+                            <option value="srgb">sRGB (Standard)</option>
+                            <option value="adobergb">Adobe RGB (Wide gamut)</option>
+                            <option value="prophoto">ProPhoto RGB (Professional)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="exportFilename">Filename:</label>
+                        <input type="text" id="exportFilename" value="color-transfer-full-quality" placeholder="Enter filename">
+                    </div>
+                    
+                    <div class="option-group">
+                        <label>
+                            <input type="checkbox" id="preserveMetadata" checked>
+                            Preserve metadata and color information
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="export-preview" id="exportPreview">
+                    <h4>Export Preview</h4>
+                    <div class="preview-info">
+                        <div class="preview-row">
+                            <span class="preview-label">Dimensions:</span>
+                            <span class="preview-value" id="previewDimensions">-</span>
+                        </div>
+                        <div class="preview-row">
+                            <span class="preview-label">Estimated Size:</span>
+                            <span class="preview-value" id="previewSize">-</span>
+                        </div>
+                        <div class="preview-row">
+                            <span class="preview-label">Processing Time:</span>
+                            <span class="preview-value" id="previewTime">-</span>
+                        </div>
+                        <div class="preview-row">
+                            <span class="preview-label">Quality:</span>
+                            <span class="preview-value" id="previewQuality">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel-btn" onclick="closeFullExportDialog()">Cancel</button>
+                <button class="export-btn" onclick="executeFullExport()">Export Image</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Progress Dialog -->
+    <div class="modal-overlay" id="exportProgressModal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="exportProgressTitle">Exporting Image</h3>
+            </div>
+            <div class="modal-body">
+                <div class="export-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="exportProgressBar"></div>
+                    </div>
+                    <div class="progress-text" id="exportProgressMessage">Preparing export...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LUT Export Dialog -->
+    <div class="modal-overlay" id="lutExportModal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Export LUT (Lookup Table)</h3>
+                <button class="modal-close" onclick="closeLUTExportDialog()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="export-options">
+                    <div class="option-group">
+                        <label for="lutFormat">File Format:</label>
+                        <select id="lutFormat">
+                            <option value="cube">.cube (Adobe/DaVinci Resolve)</option>
+                            <option value="3dl">.3dl (Autodesk/Flame)</option>
+                            <option value="lut">.lut (Generic)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="lutSize">LUT Size:</label>
+                        <select id="lutSize">
+                            <option value="17">17x17x17 (Fast)</option>
+                            <option value="33" selected>33x33x33 (Standard)</option>
+                            <option value="65">65x65x65 (High Quality)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="lutBitDepth">Bit Depth:</label>
+                        <select id="lutBitDepth">
+                            <option value="8">8-bit</option>
+                            <option value="10" selected>10-bit</option>
+                            <option value="16">16-bit</option>
+                        </select>
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="lutFilename">Filename:</label>
+                        <input type="text" id="lutFilename" value="color-transfer-lut" placeholder="Enter filename">
+                    </div>
+                    
+                    <div class="option-group">
+                        <label for="lutTitle">LUT Title:</label>
+                        <input type="text" id="lutTitle" value="Color Transfer LUT" placeholder="Enter LUT title">
+                    </div>
+                </div>
+                
+                <div class="export-progress" id="exportProgress" style="display: none;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">Preparing export...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel-btn" onclick="closeLUTExportDialog()">Cancel</button>
+                <button class="export-btn" onclick="exportLUT()">Export LUT</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="src/core/color-transfer.js"></script>
+    <script src="src/adjustments/image-adjustments.js"></script>
+    <script src="src/export/lut-export.js"></script>
+    <script src="src/export/export-manager.js"></script>
+    <script src="src/analysis/color-analysis.js"></script>
+    <script src="src/app.js"></script>
+</body>
+</html>
