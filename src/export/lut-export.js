@@ -345,3 +345,5 @@ class LUTExport {
 
 
 }
+
+window.LUTExport = LUTExport;

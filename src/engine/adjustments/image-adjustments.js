@@ -375,3 +375,5 @@ class ImageAdjustments {
         };
     }
 }
+
+window.ImageAdjustments = ImageAdjustments;

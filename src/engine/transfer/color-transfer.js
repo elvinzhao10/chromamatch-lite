@@ -405,3 +405,5 @@ class ColorTransfer {
         });
     }
 }
+
+window.ColorTransfer = ColorTransfer;

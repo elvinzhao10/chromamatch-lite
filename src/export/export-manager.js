@@ -491,3 +491,5 @@ class ExportManager {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = ExportManager;
 }
+
+window.ExportManager = ExportManager;

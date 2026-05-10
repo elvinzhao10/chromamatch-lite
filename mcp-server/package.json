@@ -1,0 +1,21 @@
+{
+  "name": "chromamatch-mcp-server",
+  "version": "2.0.0",
+  "description": "Universal MCP server for ChromaMatch color grading engine — compatible with Claude Desktop, Codex, Trae Solo, Cursor, Windsurf, and any MCP client",
+  "main": "server.js",
+  "type": "module",
+  "bin": {
+    "chromamatch-mcp": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "http": "node server.js --transport http --port 3456"
+  },
+  "dependencies": {
+    "canvas": "^2.11.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2"
+  }
+}
