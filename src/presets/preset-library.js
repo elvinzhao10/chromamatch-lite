@@ -10,7 +10,7 @@ const DEFAULT_PRESETS = [
             contrast: 10,
             highlights: -20,
             shadows: 10,
-            method: "reinhard-lab",
+            method: "hybrid-lab",
             strength: 90
         }
     },
@@ -25,7 +25,7 @@ const DEFAULT_PRESETS = [
             contrast: -15,
             highlights: -30,
             shadows: 20,
-            method: "lab-histogram",
+            method: "hybrid-lab",
             strength: 70
         }
     },
@@ -40,7 +40,7 @@ const DEFAULT_PRESETS = [
             contrast: 25,
             highlights: 15,
             shadows: -15,
-            method: "reinhard-lab",
+            method: "hybrid-lab",
             strength: 85
         }
     },
@@ -55,7 +55,7 @@ const DEFAULT_PRESETS = [
             highlights: -40,
             shadows: -20,
             exposure: -10,
-            method: "lab-histogram",
+            method: "hybrid-lab",
             strength: 80
         }
     },
@@ -71,7 +71,7 @@ const DEFAULT_PRESETS = [
             shadows: 20,
             exposure: 15,
             whites: 10,
-            method: "reinhard-lab",
+            method: "hybrid-lab",
             strength: 70
         }
     }

@@ -19,6 +19,24 @@ class ImageAdjustments {
         };
     }
 
+    srgbToLinear(value) {
+        const normalized = Math.max(0, Math.min(1, value));
+        if (normalized <= 0.04045) return normalized / 12.92;
+        return Math.pow((normalized + 0.055) / 1.055, 2.4);
+    }
+
+    linearToSrgb(value) {
+        const normalized = Math.max(0, value);
+        if (normalized <= 0.0031308) return normalized * 12.92;
+        return 1.055 * Math.pow(normalized, 1 / 2.4) - 0.055;
+    }
+
+    softClip(value, knee = 0.94) {
+        if (value <= knee) return Math.max(0, value);
+        const shoulder = 1 - knee;
+        return knee + shoulder * (1 - Math.exp(-(value - knee) / Math.max(shoulder, 1e-6)));
+    }
+
     /**
      * Set the original image data for adjustments
      * @param {ImageData} imageData - Original processed image data
@@ -268,83 +286,83 @@ class ImageAdjustments {
         const satFactor = (adjustments.saturation + 100) / 100;
 
         for (let i = 0; i < data.length; i += 4) {
-            let r = data[i];
-            let g = data[i + 1];
-            let b = data[i + 2];
+            let r = this.srgbToLinear(data[i] / 255);
+            let g = this.srgbToLinear(data[i + 1] / 255);
+            let b = this.srgbToLinear(data[i + 2] / 255);
 
             // Temperature
             if (adjustments.temperature !== 0) {
                 if (tempFactor > 0) {
-                    r = Math.min(255, r + tempFactor * 30);
-                    b = Math.max(0, b - tempFactor * 20);
+                    r *= 1 + tempFactor * 0.18;
+                    b *= 1 - tempFactor * 0.14;
                 } else {
-                    r = Math.max(0, r + tempFactor * 20);
-                    b = Math.min(255, b - tempFactor * 30);
+                    r *= 1 + tempFactor * 0.12;
+                    b *= 1 - tempFactor * 0.18;
                 }
             }
 
             // Tint
             if (adjustments.tint !== 0) {
-                r = Math.max(0, Math.min(255, r + tintFactor * 15));
-                g = Math.max(0, Math.min(255, g - tintFactor * 15));
-                b = Math.max(0, Math.min(255, b + tintFactor * 15));
+                r *= 1 + tintFactor * 0.08;
+                g *= 1 - tintFactor * 0.12;
+                b *= 1 + tintFactor * 0.08;
             }
 
             // Exposure
             if (adjustments.exposure !== 0) {
-                r = Math.min(255, r * expFactor);
-                g = Math.min(255, g * expFactor);
-                b = Math.min(255, b * expFactor);
+                r *= expFactor;
+                g *= expFactor;
+                b *= expFactor;
             }
 
             // Contrast
             if (adjustments.contrast !== 0) {
-                r = Math.max(0, Math.min(255, contFactor * (r - 128) + 128));
-                g = Math.max(0, Math.min(255, contFactor * (g - 128) + 128));
-                b = Math.max(0, Math.min(255, contFactor * (b - 128) + 128));
+                r = ((r - 0.5) * contFactor) + 0.5;
+                g = ((g - 0.5) * contFactor) + 0.5;
+                b = ((b - 0.5) * contFactor) + 0.5;
             }
 
             // Highlights, Shadows, Whites, Blacks — single luminance calculation
             if (adjustments.highlights !== 0 || adjustments.shadows !== 0 ||
                 adjustments.whites !== 0 || adjustments.blacks !== 0) {
-                const lum = 0.299 * (r / 255) + 0.587 * (g / 255) + 0.114 * (b / 255);
+                const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 if (adjustments.highlights !== 0 && lum > 0.5) {
-                    const adj = highlightFactor * (lum - 0.5) * 2 * 50;
-                    r = Math.max(0, Math.min(255, r + adj));
-                    g = Math.max(0, Math.min(255, g + adj));
-                    b = Math.max(0, Math.min(255, b + adj));
+                    const adj = highlightFactor * (lum - 0.5) * 0.32;
+                    r += adj;
+                    g += adj;
+                    b += adj;
                 }
                 if (adjustments.shadows !== 0 && lum < 0.5) {
-                    const adj = shadowFactor * (0.5 - lum) * 2 * 50;
-                    r = Math.max(0, Math.min(255, r + adj));
-                    g = Math.max(0, Math.min(255, g + adj));
-                    b = Math.max(0, Math.min(255, b + adj));
+                    const adj = shadowFactor * (0.5 - lum) * 0.34;
+                    r += adj;
+                    g += adj;
+                    b += adj;
                 }
                 if (adjustments.whites !== 0 && lum > 0.8) {
-                    const adj = whitesFactor * (lum - 0.8) * 5 * 30;
-                    r = Math.max(0, Math.min(255, r + adj));
-                    g = Math.max(0, Math.min(255, g + adj));
-                    b = Math.max(0, Math.min(255, b + adj));
+                    const adj = whitesFactor * (lum - 0.8) * 0.28;
+                    r += adj;
+                    g += adj;
+                    b += adj;
                 }
                 if (adjustments.blacks !== 0 && lum < 0.2) {
-                    const adj = blacksFactor * (0.2 - lum) * 5 * 30;
-                    r = Math.max(0, Math.min(255, r + adj));
-                    g = Math.max(0, Math.min(255, g + adj));
-                    b = Math.max(0, Math.min(255, b + adj));
+                    const adj = blacksFactor * (0.2 - lum) * 0.24;
+                    r += adj;
+                    g += adj;
+                    b += adj;
                 }
             }
 
             // Saturation
             if (adjustments.saturation !== 0) {
-                const lum = 0.299 * (r / 255) + 0.587 * (g / 255) + 0.114 * (b / 255);
-                r = Math.max(0, Math.min(255, (lum + satFactor * (r / 255 - lum)) * 255));
-                g = Math.max(0, Math.min(255, (lum + satFactor * (g / 255 - lum)) * 255));
-                b = Math.max(0, Math.min(255, (lum + satFactor * (b / 255 - lum)) * 255));
+                const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r = lum + satFactor * (r - lum);
+                g = lum + satFactor * (g - lum);
+                b = lum + satFactor * (b - lum);
             }
 
-            data[i]     = r;
-            data[i + 1] = g;
-            data[i + 2] = b;
+            data[i] = Math.round(this.softClip(this.linearToSrgb(r)) * 255);
+            data[i + 1] = Math.round(this.softClip(this.linearToSrgb(g)) * 255);
+            data[i + 2] = Math.round(this.softClip(this.linearToSrgb(b)) * 255);
         }
 
         return adjustedImageData;

@@ -15,10 +15,18 @@ let smartMatcher = new SmartMatcher();
 let presetManager = new PresetManager();
 
 let originalResultData = null;
+let currentAdjustedResultData = null;
 let cachedSourceImageData = null;
 let cachedTargetImageData = null;
 let analysisUpdateTimer = null;
 let strengthDebounceTimer = null;
+let adjustmentFrame = null;
+let analysisFrame = null;
+let shouldAutoScrollToResults = true;
+let currentReferenceDataUrl = null;
+const REFERENCE_MEMORY_KEY = 'chromamatch_reference_memory';
+const displayScratchCanvas = document.createElement('canvas');
+const analysisScratchCanvas = document.createElement('canvas');
 
 // Search state
 let searchService = new SearchService();
@@ -125,6 +133,7 @@ function updateMethodHint(result = null) {
     const method = algorithmMethod.value;
     const perf = performanceMode.value;
     const baseHint = {
+        'hybrid-lab': 'Hybrid LAB: balanced global transfer plus histogram refinement for higher matching accuracy.',
         'reinhard-lab': 'Reinhard LAB: fast and natural global color transfer.',
         'lab-histogram': 'LAB histogram matching: better tonal alignment, slower on large images.',
         'rgb-mean-std': 'RGB mean/std: fastest option, less perceptual accuracy.',
@@ -151,7 +160,17 @@ function revertToImageSelection() {
         uploadSection.style.display = 'block';
     }
     hideResults();
+    shouldAutoScrollToResults = true;
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function closeAllModals() {
+    ['fullExportModal', 'lutExportModal', 'refPopup', 'settingsModal'].forEach((id) => {
+        const modal = document.getElementById(id);
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    });
 }
 
 function setActiveDashboardWindow(windowId) {
@@ -251,6 +270,13 @@ function getTransferOptions() {
     };
 }
 
+function getProcessingMaxSize() {
+    const mode = performanceMode ? performanceMode.value : 'balanced';
+    if (mode === 'fast') return 1440;
+    if (mode === 'quality') return 2800;
+    return 2048;
+}
+
 function handleImageUpload(event, type) {
     const file = event.target.files[0];
     if (!file) return;
@@ -276,6 +302,7 @@ function handleImageUpload(event, type) {
                 document.getElementById('sourceUpload').classList.add('has-image');
             } else {
                 targetImage = img;
+                currentReferenceDataUrl = e.target.result;
                 targetImg.src = e.target.result;
                 targetPreview.style.display = 'block';
                 document.getElementById('targetUpload').classList.add('has-image');
@@ -301,6 +328,7 @@ function removeImage(type) {
         document.getElementById('sourceUpload').classList.remove('has-image');
     } else {
         targetImage = null;
+        currentReferenceDataUrl = null;
         targetInput.value = '';
         targetPreview.style.display = 'none';
         document.getElementById('targetUpload').classList.remove('has-image');
@@ -322,6 +350,102 @@ function showStatus(message, type = '') {
         statusMessage.textContent = message;
         statusMessage.className = `status-message ${type}`;
     }
+}
+
+function showError(message) {
+    showStatus(message, 'error');
+}
+
+function getReferenceMemory() {
+    try {
+        return JSON.parse(localStorage.getItem(REFERENCE_MEMORY_KEY)) || {
+            lastQuery: '',
+            searchHistory: [],
+            selectedPresetId: null,
+            savedLooks: []
+        };
+    } catch {
+        return {
+            lastQuery: '',
+            searchHistory: [],
+            selectedPresetId: null,
+            savedLooks: []
+        };
+    }
+}
+
+function saveReferenceMemory(memory) {
+    localStorage.setItem(REFERENCE_MEMORY_KEY, JSON.stringify(memory));
+}
+
+function updateReferenceMemory(patch) {
+    const next = { ...getReferenceMemory(), ...patch };
+    saveReferenceMemory(next);
+    return next;
+}
+
+function rememberSearchQuery(query, details = {}) {
+    const memory = getReferenceMemory();
+    const searchHistory = [
+        { query, timestamp: new Date().toISOString(), ...details },
+        ...memory.searchHistory.filter((item) => item.query !== query)
+    ].slice(0, 12);
+    saveReferenceMemory({
+        ...memory,
+        lastQuery: query,
+        searchHistory
+    });
+}
+
+function rememberReferenceSelection(meta = {}) {
+    const memory = getReferenceMemory();
+    const savedLooks = [
+        {
+            timestamp: new Date().toISOString(),
+            presetId: memory.selectedPresetId,
+            styleState: unifiedSession?.styleState || null,
+            ...meta
+        },
+        ...memory.savedLooks
+    ].slice(0, 8);
+    saveReferenceMemory({
+        ...memory,
+        savedLooks
+    });
+}
+
+function applyReferenceMemoryToPrompt(query) {
+    const memory = getReferenceMemory();
+    const preset = memory.selectedPresetId ? presetManager.getPresetById(memory.selectedPresetId) : null;
+    const recentQueries = memory.searchHistory.slice(0, 3).map((item) => item.query);
+    const hints = [];
+
+    if (preset?.name) {
+        hints.push(`anchor preset: ${preset.name}`);
+    }
+    if (preset?.tags?.length) {
+        hints.push(`preset tags: ${preset.tags.join(', ')}`);
+    }
+    if (unifiedSession?.styleState?.visualStyle) {
+        hints.push(`style memory: ${unifiedSession.styleState.visualStyle}`);
+    }
+    if (recentQueries.length) {
+        hints.push(`recent reference intent: ${recentQueries.join(' | ')}`);
+    }
+
+    return hints.length ? `${query}\nContext: ${hints.join(' ; ')}` : query;
+}
+
+function buildReferenceSearchContext(query) {
+    const memory = getReferenceMemory();
+    const preset = memory.selectedPresetId ? presetManager.getPresetById(memory.selectedPresetId) : null;
+    const hints = [];
+
+    if (preset?.name) hints.push(`anchor preset: ${preset.name}`);
+    if (preset?.tags?.length) hints.push(`preset tags: ${preset.tags.slice(0, 4).join(', ')}`);
+    if (unifiedSession?.styleState?.visualStyle) hints.push(`style memory: ${unifiedSession.styleState.visualStyle}`);
+
+    return hints.length ? `${query}\nSearch context: ${hints.join(' ; ')}` : query;
 }
 
 function showLoading() {
@@ -350,10 +474,9 @@ async function processImages() {
     hideResults();
 
     try {
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        const sourceCanvas = resizeImage(sourceImage, Math.max(sourceImage.width, sourceImage.height));
-        const targetCanvas = resizeImage(targetImage, Math.max(targetImage.width, targetImage.height));
+        const maxProcessingSize = getProcessingMaxSize();
+        const sourceCanvas = resizeImage(sourceImage, maxProcessingSize);
+        const targetCanvas = resizeImage(targetImage, maxProcessingSize);
 
         const sourceCtx = sourceCanvas.getContext('2d');
         const targetCtx = targetCanvas.getContext('2d');
@@ -362,7 +485,6 @@ async function processImages() {
         const targetImageData = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
 
         showStatus('Applying color transfer algorithm...', 'processing');
-        await new Promise(resolve => setTimeout(resolve, 50));
 
         cachedSourceImageData = sourceImageData;
         cachedTargetImageData = targetImageData;
@@ -370,19 +492,7 @@ async function processImages() {
         const options = getTransferOptions();
         let result;
 
-        if (options.method === 'auto') {
-            result = smartMatcher.smartTransfer(sourceImageData, targetImageData, {
-                method: 'reinhard-lab',
-                strength: options.strength,
-                performanceMode: options.performanceMode,
-                useAdaptiveStrength: true
-            });
-            if (result.imageData) {
-                result = { imageData: result.imageData, method: 'reinhard-lab', strength: options.strength };
-            }
-        } else {
-            result = colorTransfer.transferColors(sourceImageData, targetImageData, options);
-        }
+        result = colorTransfer.transferColors(sourceImageData, targetImageData, options);
 
         updateMethodHint(result);
 
@@ -415,8 +525,8 @@ function resizeImage(img, maxSize) {
         }
     }
 
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = Math.max(1, Math.round(width));
+    canvas.height = Math.max(1, Math.round(height));
     ctx.drawImage(img, 0, 0, width, height);
 
     return canvas;
@@ -424,6 +534,7 @@ function resizeImage(img, maxSize) {
 
 function displayResults(sourceData, targetData, result) {
     originalResultData = result.imageData;
+    currentAdjustedResultData = result.imageData;
     imageAdjustments.setOriginalImageData(result.imageData);
 
     displayImageData(originalCanvas, sourceData);
@@ -443,7 +554,10 @@ function displayResults(sourceData, targetData, result) {
     }
 
     resultsSection.style.display = 'block';
-    resultsSection.scrollIntoView({ behavior: 'smooth' });
+    if (shouldAutoScrollToResults) {
+        shouldAutoScrollToResults = false;
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 }
 
 function updateComparisonViews() {
@@ -509,11 +623,11 @@ function displayImageData(canvas, imageData) {
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
-    const tmp = document.createElement('canvas');
-    tmp.width = imageData.width;
-    tmp.height = imageData.height;
-    tmp.getContext('2d').putImageData(imageData, 0, 0);
-    ctx.drawImage(tmp, 0, 0, w, h);
+    displayScratchCanvas.width = imageData.width;
+    displayScratchCanvas.height = imageData.height;
+    displayScratchCanvas.getContext('2d').putImageData(imageData, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(displayScratchCanvas, 0, 0, w, h);
 }
 
 function hideResults() {
@@ -523,8 +637,15 @@ function hideResults() {
     }
     adjustmentsSection.style.display = 'none';
     originalResultData = null;
+    currentAdjustedResultData = null;
     cachedSourceImageData = null;
     cachedTargetImageData = null;
+    if (adjustmentFrame) cancelAnimationFrame(adjustmentFrame);
+    if (analysisFrame) cancelAnimationFrame(analysisFrame);
+    clearTimeout(analysisUpdateTimer);
+    clearTimeout(strengthDebounceTimer);
+    adjustmentFrame = null;
+    analysisFrame = null;
     imageAdjustments.resetAdjustments();
 }
 
@@ -607,8 +728,8 @@ async function executeFullExport() {
 
 function generateColorAnalysisVisualization(sourceData, targetData, resultData) {
     showStatus('Generating color analysis...', 'processing');
-
-    setTimeout(() => {
+    clearTimeout(analysisUpdateTimer);
+    analysisUpdateTimer = setTimeout(() => {
         try {
             const originalAnalysis = colorAnalysis.analyzeImage(sourceData, 'Original Image');
             const referenceAnalysis = colorAnalysis.analyzeImage(targetData, 'Reference Image');
@@ -629,7 +750,7 @@ function generateColorAnalysisVisualization(sourceData, targetData, resultData) 
             console.error('Color analysis error:', error);
             showStatus('Error generating color analysis.', 'error');
         }
-    }, 100);
+    }, 60);
 }
 
 function setupDragAndDrop() {
@@ -675,7 +796,7 @@ function updateAdjustment(adjustmentType, value) {
     imageAdjustments.updateAdjustments({ [adjustmentType]: numValue });
 
     if (originalResultData) {
-        applyAdjustmentsRealTime();
+        scheduleAdjustmentPreview();
     }
 }
 
@@ -684,10 +805,22 @@ function applyAdjustmentsRealTime() {
 
     const adjustedImageData = imageAdjustments.applyAllAdjustments();
     if (adjustedImageData) {
+        currentAdjustedResultData = adjustedImageData;
         displayImageData(resultCanvas, adjustedImageData);
         updateComparisonViews();
         scheduleAnalysisUpdate();
     }
+}
+
+function scheduleAdjustmentPreview() {
+    if (adjustmentFrame) {
+        cancelAnimationFrame(adjustmentFrame);
+    }
+
+    adjustmentFrame = requestAnimationFrame(() => {
+        adjustmentFrame = null;
+        applyAdjustmentsRealTime();
+    });
 }
 
 function reapplyTransfer() {
@@ -702,26 +835,36 @@ function reapplyTransfer() {
 
 function scheduleAnalysisUpdate() {
     clearTimeout(analysisUpdateTimer);
-    analysisUpdateTimer = setTimeout(updateLiveAnalysis, 150);
+    if (analysisFrame) cancelAnimationFrame(analysisFrame);
+    analysisUpdateTimer = setTimeout(() => {
+        analysisFrame = requestAnimationFrame(() => {
+            analysisFrame = null;
+            updateLiveAnalysis();
+        });
+    }, 180);
 }
 
 function updateLiveAnalysis() {
-    if (!resultCanvas.width || !colorAnalysis.cachedRefAnalysis) return;
+    if (!currentAdjustedResultData || !colorAnalysis.cachedRefAnalysis) return;
 
     const maxSize = 400;
-    let analysisCanvas = resultCanvas;
+    let imageData = currentAdjustedResultData;
 
-    if (resultCanvas.width > maxSize || resultCanvas.height > maxSize) {
-        const scale = maxSize / Math.max(resultCanvas.width, resultCanvas.height);
-        const w = Math.round(resultCanvas.width * scale);
-        const h = Math.round(resultCanvas.height * scale);
-        analysisCanvas = document.createElement('canvas');
-        analysisCanvas.width = w;
-        analysisCanvas.height = h;
-        analysisCanvas.getContext('2d').drawImage(resultCanvas, 0, 0, w, h);
+    if (currentAdjustedResultData.width > maxSize || currentAdjustedResultData.height > maxSize) {
+        const scale = maxSize / Math.max(currentAdjustedResultData.width, currentAdjustedResultData.height);
+        const w = Math.round(currentAdjustedResultData.width * scale);
+        const h = Math.round(currentAdjustedResultData.height * scale);
+        analysisScratchCanvas.width = w;
+        analysisScratchCanvas.height = h;
+        const scratchCtx = analysisScratchCanvas.getContext('2d');
+        displayScratchCanvas.width = currentAdjustedResultData.width;
+        displayScratchCanvas.height = currentAdjustedResultData.height;
+        displayScratchCanvas.getContext('2d').putImageData(currentAdjustedResultData, 0, 0);
+        scratchCtx.clearRect(0, 0, w, h);
+        scratchCtx.drawImage(displayScratchCanvas, 0, 0, w, h);
+        imageData = scratchCtx.getImageData(0, 0, w, h);
     }
 
-    const imageData = analysisCanvas.getContext('2d').getImageData(0, 0, analysisCanvas.width, analysisCanvas.height);
     colorAnalysis.updateResultVisualization(imageData);
 }
 
@@ -763,6 +906,7 @@ function resetAdjustments() {
 
 // Reference Popup System
 function openReferencePopup() {
+    closeAllModals();
     document.getElementById('refPopup').style.display = 'flex';
     setupRefPopupEvents();
 }
@@ -774,11 +918,17 @@ function closeReferencePopup() {
 function setupRefPopupEvents() {
     const searchInput = document.getElementById('refPopupSearchInput');
     const searchBtn = document.getElementById('refPopupDoSearch');
+    const sourceSelect = document.getElementById('refPopupSourceSelect');
     const chips = document.querySelectorAll('.ref-popup-chips button');
     const tabs = document.querySelectorAll('.ref-tab-btn');
     
     searchBtn.onclick = () => doRefPopupSearch();
     searchInput.onkeypress = (e) => { if (e.key === 'Enter') doRefPopupSearch(); };
+    if (sourceSelect && !sourceSelect.dataset.bound) {
+        sourceSelect.dataset.bound = 'true';
+        sourceSelect.addEventListener('change', updateReferenceModeHint);
+        updateReferenceModeHint();
+    }
     
     chips.forEach(ch => {
         ch.onclick = () => { searchInput.value = ch.dataset.search; doRefPopupSearch(); };
@@ -820,11 +970,48 @@ function setupRefPopupEvents() {
     }
 }
 
+function updateReferenceModeHint() {
+    const mode = document.getElementById('refPopupSourceSelect')?.value || 'ai';
+    const hint = document.getElementById('refSourceHint');
+    if (!hint) return;
+
+    const text = {
+        ai: 'AI expands fuzzy descriptions and searches across the best sources.',
+        cinema: 'Bias toward film stills, widescreen frames, and cinematography references.',
+        photo: 'Bias toward strong photographic lighting, palette, and environment references.',
+        archive: 'Bias toward literal documentary and archival imagery with less stylization.'
+    }[mode] || '';
+
+    hint.textContent = text;
+}
+
+function summarizeReferenceClassification(classification) {
+    if (!classification) return '';
+    const facets = classification.facets || {};
+    const parts = [
+        ...(facets.colors || []).slice(0, 2),
+        ...(facets.subjects || []).slice(0, 2),
+        ...(facets.techniques || []).slice(0, 2),
+        ...Object.values(facets.taxonomy || {}).flat().slice(0, 2)
+    ].filter(Boolean);
+
+    const labelMap = {
+        film: 'Film match',
+        'film-keyword': 'Cinema search',
+        style: 'Style search',
+        descriptive: 'Visual search',
+        keyword: 'Keyword search'
+    };
+
+    const label = labelMap[classification.type] || 'Search';
+    return parts.length ? `${label}: ${parts.join(' • ')}` : label;
+}
+
 async function doRefPopupSearch() {
     const query = document.getElementById('refPopupSearchInput')?.value?.trim();
     if (!query) return;
     
-    const source = document.getElementById('refPopupSourceSelect')?.value || 'smart';
+    const source = document.getElementById('refPopupSourceSelect')?.value || 'ai';
     const container = document.getElementById('refPopupResults');
     const grid = document.getElementById('refPopupGrid');
     
@@ -833,16 +1020,29 @@ async function doRefPopupSearch() {
     
     grid.innerHTML = '<div class="loading">Searching...</div>';
     container.style.display = 'block';
+    rememberSearchQuery(query, { source });
     
     try {
         let result;
+        const aiSearchPrompt = buildReferenceSearchContext(query);
+        const aiProvider = getSelectedAiProvider() || unifiedSession.routeTask('chat', aiSearchPrompt);
+        const aiKey = getAIKey(aiProvider);
+        const aiModel = getAIChatModel(aiProvider);
+        const aiBaseUrl = getAIBaseUrl(aiProvider);
         
-        if (source === 'smart') {
-            result = await searchService.smartSearch(query, ['wikimedia', 'flickr']);
-        } else if (source === 'all') {
-            result = { results: (await searchService.search(query, ['wikimedia', 'flickr', 'tmdb', 'unsplash', 'pexels'])).results };
+        const modeSources = searchService.resolveMode(source);
+
+        if (aiKey && source === 'ai') {
+            result = await searchService.aiDrivenSearch(query, {
+                provider: aiProvider,
+                apiKey: aiKey,
+                model: aiModel,
+                baseUrl: aiBaseUrl,
+                contextHint: aiSearchPrompt,
+                sources: modeSources
+            });
         } else {
-            result = { results: (await searchService.search(query, [source])).results };
+            result = await searchService.smartSearch(query, modeSources);
         }
         
         const existingBanner = container.querySelector('.film-match-banner, .desc-banner');
@@ -853,10 +1053,10 @@ async function doRefPopupSearch() {
             banner.className = 'film-match-banner';
             banner.textContent = `${result.filmMatch.title} (${result.filmMatch.year}) \u2014 Dir: ${result.filmMatch.director} \u2014 DP: ${result.filmMatch.dp} \u2014 ${result.filmMatch.keywords}`;
             container.insertBefore(banner, grid);
-        } else if (result.classification?.type === 'descriptive') {
+        } else if (result.classification?.type === 'descriptive' || result.classification?.type === 'style' || result.classification?.type === 'film-keyword') {
             const banner = document.createElement('div');
             banner.className = 'desc-banner';
-            banner.textContent = 'Searching by visual style keywords';
+            banner.textContent = summarizeReferenceClassification(result.classification);
             container.insertBefore(banner, grid);
         }
         
@@ -904,7 +1104,13 @@ function setRefImageData(imageData) {
     c.width = imageData.width; c.height = imageData.height;
     c.getContext('2d').putImageData(imageData, 0, 0);
     const dataUrl = c.toDataURL();
+    currentReferenceDataUrl = dataUrl;
     cachedTargetImageData = imageData;
+    rememberReferenceSelection({
+        width: imageData.width,
+        height: imageData.height,
+        referenceDataUrl: dataUrl.slice(0, 128)
+    });
     targetImg.src = dataUrl;
     targetPreview.style.display = 'block';
     document.getElementById('targetUpload').classList.add('has-image');
@@ -943,8 +1149,389 @@ const unifiedSession = new UnifiedSession();
 
 function getAIKey(provider) { return localStorage.getItem('ai_key_' + provider) || ''; }
 function getAIBaseUrl(provider) { var c = PROVIDER_CONFIGS[provider]; return localStorage.getItem('ai_baseurl_' + provider) || (c && c.chatBaseUrl) || ''; }
-function getAIChatModel(provider) { return localStorage.getItem('ai_chatmodel_' + provider) || (PROVIDER_CONFIGS[provider] && PROVIDER_CONFIGS[provider].chatModels[0] && PROVIDER_CONFIGS[provider].chatModels[0].value) || ''; }
-function getAIImgModel(provider) { return localStorage.getItem('ai_imgmodel_' + provider) || (PROVIDER_CONFIGS[provider] && PROVIDER_CONFIGS[provider].imgModels[0] && PROVIDER_CONFIGS[provider].imgModels[0].value) || ''; }
+function getAIChatModel(provider) {
+    var customOverride = localStorage.getItem('ai_custom_chatmodel_' + provider) || '';
+    return customOverride || localStorage.getItem('ai_chatmodel_' + provider) || (PROVIDER_CONFIGS[provider] && PROVIDER_CONFIGS[provider].chatModels[0] && PROVIDER_CONFIGS[provider].chatModels[0].value) || '';
+}
+function getAIImgModel(provider) {
+    var customOverride = localStorage.getItem('ai_custom_imgmodel_' + provider) || '';
+    return customOverride || localStorage.getItem('ai_imgmodel_' + provider) || (PROVIDER_CONFIGS[provider] && PROVIDER_CONFIGS[provider].imgModels[0] && PROVIDER_CONFIGS[provider].imgModels[0].value) || '';
+}
+const PROVIDER_REGISTRY_KEY = 'cm_provider_registry_v1';
+const PROVIDER_MODEL_CACHE_KEY = 'cm_provider_model_cache_v1';
+let providerEditorState = { editingId: null };
+
+function readJsonStorage(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+    } catch (error) {
+        return fallback;
+    }
+}
+
+function writeJsonStorage(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+}
+
+function getProviderModelCache() {
+    return readJsonStorage(PROVIDER_MODEL_CACHE_KEY, {});
+}
+
+function setProviderModelCache(cache) {
+    writeJsonStorage(PROVIDER_MODEL_CACHE_KEY, cache || {});
+}
+
+function buildProviderEntry(preset, overrides) {
+    const config = PROVIDER_CONFIGS[preset] || {};
+    const now = new Date().toISOString();
+    return {
+        id: 'provider_' + Math.random().toString(36).slice(2, 10),
+        preset,
+        displayName: config.label || preset,
+        apiKey: '',
+        baseUrl: config.chatBaseUrl || '',
+        chatModel: config.chatModels?.[0]?.value || '',
+        imgModel: config.imgModels?.[0]?.value || '',
+        customChatModel: '',
+        customImgModel: '',
+        docsUrl: config.docsUrl || '',
+        createdAt: now,
+        updatedAt: now,
+        ...(overrides || {})
+    };
+}
+
+function syncLegacyProviderSettings(entries) {
+    ['openai', 'gemini', 'deerapi', 'custom'].forEach((preset) => {
+        const entry = entries.find((item) => item.preset === preset);
+        const values = {
+            ['ai_key_' + preset]: entry?.apiKey || '',
+            ['ai_baseurl_' + preset]: entry?.baseUrl || (PROVIDER_CONFIGS[preset]?.chatBaseUrl || ''),
+            ['ai_chatmodel_' + preset]: entry?.chatModel || (PROVIDER_CONFIGS[preset]?.chatModels?.[0]?.value || ''),
+            ['ai_imgmodel_' + preset]: entry?.imgModel || (PROVIDER_CONFIGS[preset]?.imgModels?.[0]?.value || ''),
+            ['ai_custom_chatmodel_' + preset]: entry?.customChatModel || '',
+            ['ai_custom_imgmodel_' + preset]: entry?.customImgModel || ''
+        };
+        Object.entries(values).forEach(([key, value]) => {
+            if (value) localStorage.setItem(key, value);
+            else localStorage.removeItem(key);
+        });
+    });
+}
+
+function migrateLegacyProviderRegistry() {
+    const entries = [];
+    ['openai', 'gemini', 'deerapi', 'custom'].forEach((preset) => {
+        const apiKey = localStorage.getItem('ai_key_' + preset) || '';
+        const baseUrl = localStorage.getItem('ai_baseurl_' + preset) || (PROVIDER_CONFIGS[preset]?.chatBaseUrl || '');
+        const chatModel = localStorage.getItem('ai_chatmodel_' + preset) || (PROVIDER_CONFIGS[preset]?.chatModels?.[0]?.value || '');
+        const imgModel = localStorage.getItem('ai_imgmodel_' + preset) || (PROVIDER_CONFIGS[preset]?.imgModels?.[0]?.value || '');
+        const customChatModel = localStorage.getItem('ai_custom_chatmodel_' + preset) || '';
+        const customImgModel = localStorage.getItem('ai_custom_imgmodel_' + preset) || '';
+        if (apiKey || baseUrl || chatModel || imgModel || customChatModel || customImgModel) {
+            entries.push(buildProviderEntry(preset, {
+                displayName: PROVIDER_CONFIGS[preset]?.label || preset,
+                apiKey,
+                baseUrl,
+                chatModel,
+                imgModel,
+                customChatModel,
+                customImgModel,
+                docsUrl: PROVIDER_CONFIGS[preset]?.docsUrl || ''
+            }));
+        }
+    });
+    if (entries.length) {
+        writeJsonStorage(PROVIDER_REGISTRY_KEY, entries);
+    }
+    return entries;
+}
+
+function getProviderRegistry() {
+    const stored = readJsonStorage(PROVIDER_REGISTRY_KEY, null);
+    return Array.isArray(stored) ? stored : migrateLegacyProviderRegistry();
+}
+
+function saveProviderRegistry(entries) {
+    writeJsonStorage(PROVIDER_REGISTRY_KEY, entries);
+    syncLegacyProviderSettings(entries);
+}
+
+function getProviderPresetOptions() {
+    return Object.keys(PROVIDER_CONFIGS).map((preset) => ({
+        value: preset,
+        label: PROVIDER_CONFIGS[preset].label || preset
+    }));
+}
+
+function maskKey(key) {
+    if (!key) return 'Missing key';
+    if (key.length <= 8) return 'Saved';
+    return key.slice(0, 4) + '…' + key.slice(-4);
+}
+
+function getProviderStatus(entry) {
+    if (!entry.apiKey) return 'Needs API key';
+    if (entry.preset === 'custom' && !entry.baseUrl) return 'Needs base URL';
+    return 'Ready';
+}
+
+function getMergedModelOptions(preset, kind, currentValue) {
+    const configOptions = (kind === 'chat' ? PROVIDER_CONFIGS[preset]?.chatModels : PROVIDER_CONFIGS[preset]?.imgModels) || [];
+    const cache = getProviderModelCache();
+    const cachedOptions = cache[preset]?.[kind] || [];
+    const map = new Map();
+    [...configOptions, ...cachedOptions].forEach((item) => {
+        if (!item?.value) return;
+        map.set(item.value, { value: item.value, label: item.label || item.value });
+    });
+    if (currentValue && !map.has(currentValue)) {
+        map.set(currentValue, { value: currentValue, label: currentValue + ' (current)' });
+    }
+    return Array.from(map.values());
+}
+
+function populateModelSelect(selectId, options, selectedValue) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    select.innerHTML = options.map((option) => `<option value="${option.value}">${option.label}</option>`).join('');
+    select.value = selectedValue && options.some((option) => option.value === selectedValue)
+        ? selectedValue
+        : (options[0]?.value || '');
+}
+
+function renderProviderRegistryTable() {
+    const tbody = document.getElementById('providerRegistryTableBody');
+    if (!tbody) return;
+    const entries = getProviderRegistry();
+    if (!entries.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="table-muted">No providers added yet. Use “Add Provider” to start from a preset.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = entries.map((entry) => `
+        <tr>
+            <td>${entry.displayName || PROVIDER_CONFIGS[entry.preset]?.label || entry.preset}<div class="provider-subtle">${maskKey(entry.apiKey)}</div></td>
+            <td>${PROVIDER_CONFIGS[entry.preset]?.label || entry.preset}</td>
+            <td><span class="provider-status-chip ${getProviderStatus(entry) === 'Ready' ? 'ready' : 'pending'}">${getProviderStatus(entry)}</span></td>
+            <td>${entry.customChatModel || entry.chatModel || '<span class="table-muted">Unset</span>'}</td>
+            <td>${entry.customImgModel || entry.imgModel || '<span class="table-muted">Unset</span>'}</td>
+            <td>${entry.baseUrl || '<span class="table-muted">Default</span>'}</td>
+            <td>${entry.docsUrl ? `<a href="${entry.docsUrl}" target="_blank" rel="noopener noreferrer">Docs</a>` : '<span class="table-muted">Custom</span>'}</td>
+            <td><button type="button" class="secondary-btn provider-edit-btn" data-provider-id="${entry.id}">Edit</button></td>
+        </tr>
+    `).join('');
+    tbody.querySelectorAll('.provider-edit-btn').forEach((button) => {
+        button.addEventListener('click', () => openProviderEditor(button.dataset.providerId));
+    });
+}
+
+function getSelectablePresets(editingId) {
+    const entries = getProviderRegistry();
+    const editingEntry = entries.find((entry) => entry.id === editingId);
+    const taken = new Set(entries.filter((entry) => entry.id !== editingId).map((entry) => entry.preset));
+    return getProviderPresetOptions().filter((option) => !taken.has(option.value) || option.value === editingEntry?.preset);
+}
+
+function refreshProviderPresetSelect(editingId) {
+    const select = document.getElementById('providerPresetSelect');
+    if (!select) return;
+    const options = getSelectablePresets(editingId);
+    select.innerHTML = options.map((option) => `<option value="${option.value}">${option.label}</option>`).join('');
+}
+
+function updateProviderEditorModels(preset, entry) {
+    populateModelSelect('providerChatModel', getMergedModelOptions(preset, 'chat', entry.chatModel), entry.chatModel);
+    populateModelSelect('providerImgModel', getMergedModelOptions(preset, 'img', entry.imgModel), entry.imgModel);
+}
+
+function applyProviderPreset(preset, entry) {
+    const config = PROVIDER_CONFIGS[preset] || {};
+    const docsLink = document.getElementById('providerDocsLink');
+    const hint = document.getElementById('providerEditorHint');
+    const baseInput = document.getElementById('providerBaseUrl');
+    if (docsLink) {
+        docsLink.href = config.docsUrl || '#';
+        docsLink.style.display = config.docsUrl ? 'inline-flex' : 'none';
+    }
+    if (hint) {
+        hint.textContent = config.setupBlurb || 'Fill the required fields for this provider.';
+    }
+    if (baseInput && !providerEditorState.editingId && !baseInput.value) {
+        baseInput.value = config.chatBaseUrl || '';
+    }
+    updateProviderEditorModels(preset, entry);
+}
+
+function closeProviderEditor() {
+    providerEditorState.editingId = null;
+    const card = document.getElementById('providerEditorCard');
+    if (card) card.style.display = 'none';
+}
+
+function openProviderEditor(providerId) {
+    const entries = getProviderRegistry();
+    const editing = entries.find((entry) => entry.id === providerId) || null;
+    providerEditorState.editingId = editing?.id || null;
+    refreshProviderPresetSelect(providerEditorState.editingId);
+    const selectablePresets = getSelectablePresets(providerEditorState.editingId);
+    if (!editing && !selectablePresets.length) {
+        showError('All built-in provider presets are already added. Edit an existing row instead.');
+        return;
+    }
+    const preset = editing?.preset || document.getElementById('providerPresetSelect')?.value || selectablePresets?.[0]?.value || 'openai';
+    const entry = editing || buildProviderEntry(preset);
+    document.getElementById('providerEditorCard').style.display = 'block';
+    document.getElementById('providerEditorTitle').textContent = editing ? 'Edit Provider' : 'Add Provider';
+    document.getElementById('providerPresetSelect').value = preset;
+    document.getElementById('providerDisplayName').value = entry.displayName || '';
+    document.getElementById('providerApiKey').value = entry.apiKey || '';
+    document.getElementById('providerBaseUrl').value = entry.baseUrl || '';
+    document.getElementById('providerCustomChatModel').value = entry.customChatModel || '';
+    document.getElementById('providerCustomImgModel').value = entry.customImgModel || '';
+    document.getElementById('deleteProviderBtn').style.display = editing ? 'inline-flex' : 'none';
+    applyProviderPreset(preset, entry);
+}
+
+function collectProviderEditorData() {
+    const preset = document.getElementById('providerPresetSelect')?.value || 'openai';
+    return {
+        preset,
+        displayName: document.getElementById('providerDisplayName')?.value?.trim() || (PROVIDER_CONFIGS[preset]?.label || preset),
+        apiKey: document.getElementById('providerApiKey')?.value?.trim() || '',
+        baseUrl: document.getElementById('providerBaseUrl')?.value?.trim() || (PROVIDER_CONFIGS[preset]?.chatBaseUrl || ''),
+        chatModel: document.getElementById('providerChatModel')?.value || '',
+        imgModel: document.getElementById('providerImgModel')?.value || '',
+        customChatModel: document.getElementById('providerCustomChatModel')?.value?.trim() || '',
+        customImgModel: document.getElementById('providerCustomImgModel')?.value?.trim() || '',
+        docsUrl: PROVIDER_CONFIGS[preset]?.docsUrl || ''
+    };
+}
+
+function saveProviderFromEditor() {
+    const data = collectProviderEditorData();
+    if (!data.apiKey) {
+        showError('API key is required for a provider to be usable.');
+        return;
+    }
+    if (data.preset === 'custom' && !data.baseUrl) {
+        showError('Custom providers need a base URL.');
+        return;
+    }
+    const entries = getProviderRegistry();
+    const duplicate = entries.find((entry) => entry.preset === data.preset && entry.id !== providerEditorState.editingId);
+    if (duplicate) {
+        showError((PROVIDER_CONFIGS[data.preset]?.label || data.preset) + ' is already added. Edit the existing row instead.');
+        return;
+    }
+    if (providerEditorState.editingId) {
+        const index = entries.findIndex((entry) => entry.id === providerEditorState.editingId);
+        if (index >= 0) entries[index] = { ...entries[index], ...data, updatedAt: new Date().toISOString() };
+    } else {
+        entries.push(buildProviderEntry(data.preset, data));
+    }
+    saveProviderRegistry(entries);
+    renderProviderRegistryTable();
+    showStatus('Provider saved.', 'success');
+    closeProviderEditor();
+}
+
+function deleteProviderFromEditor() {
+    if (!providerEditorState.editingId) return;
+    const entries = getProviderRegistry().filter((entry) => entry.id !== providerEditorState.editingId);
+    saveProviderRegistry(entries);
+    renderProviderRegistryTable();
+    showStatus('Provider removed.', 'success');
+    closeProviderEditor();
+}
+
+function classifyRemoteModels(provider, modelIds) {
+    const chat = [];
+    const img = [];
+    modelIds.forEach((modelId) => {
+        const lower = modelId.toLowerCase();
+        const option = { value: modelId, label: modelId };
+        if (/image|imagen|vision-image|dall-e|gpt-image/.test(lower)) img.push(option);
+        else if (!/embed|embedding|tts|transcrib|speech|rerank/.test(lower)) chat.push(option);
+    });
+    return {
+        chat: chat.length ? chat : getMergedModelOptions(provider, 'chat'),
+        img: img.length ? img : getMergedModelOptions(provider, 'img')
+    };
+}
+
+async function refreshProviderModels() {
+    const data = collectProviderEditorData();
+    if (!data.apiKey) {
+        showError('Add an API key first so the app can ask the provider for its model list.');
+        return;
+    }
+    const baseUrl = (data.baseUrl || PROVIDER_CONFIGS[data.preset]?.chatBaseUrl || '').replace(/\/+$/, '');
+    if (!baseUrl) {
+        showError('This provider needs a base URL before models can be refreshed.');
+        return;
+    }
+    try {
+        let modelIds = [];
+        if (data.preset === 'gemini') {
+            const response = await fetch(baseUrl + '/models?key=' + encodeURIComponent(data.apiKey));
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload?.error?.message || 'Failed to load Gemini models');
+            modelIds = (payload.models || []).map((model) => String(model.name || '').replace(/^models\//, '')).filter(Boolean);
+        } else {
+            const response = await fetch(baseUrl + '/models', {
+                headers: { Authorization: 'Bearer ' + data.apiKey }
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload?.error?.message || 'Failed to load models');
+            modelIds = (payload.data || []).map((model) => model.id).filter(Boolean);
+        }
+        const cache = getProviderModelCache();
+        cache[data.preset] = classifyRemoteModels(data.preset, modelIds);
+        setProviderModelCache(cache);
+        applyProviderPreset(data.preset, { ...data });
+        showStatus('Model list refreshed.', 'success');
+    } catch (error) {
+        showError('Could not refresh models: ' + error.message);
+    }
+}
+
+function initSettingsUi() {
+    if (document.body.dataset.settingsUiReady === 'true') return;
+    document.body.dataset.settingsUiReady = 'true';
+    document.getElementById('addProviderBtn')?.addEventListener('click', () => openProviderEditor());
+    document.getElementById('providerEditorClose')?.addEventListener('click', closeProviderEditor);
+    document.getElementById('saveProviderBtn')?.addEventListener('click', saveProviderFromEditor);
+    document.getElementById('deleteProviderBtn')?.addEventListener('click', deleteProviderFromEditor);
+    document.getElementById('refreshProviderModelsBtn')?.addEventListener('click', refreshProviderModels);
+    document.getElementById('providerPresetSelect')?.addEventListener('change', (event) => {
+        const preset = event.target.value;
+        const entry = buildProviderEntry(preset, {
+            displayName: document.getElementById('providerDisplayName')?.value?.trim() || (PROVIDER_CONFIGS[preset]?.label || preset),
+            apiKey: document.getElementById('providerApiKey')?.value?.trim() || '',
+            baseUrl: document.getElementById('providerBaseUrl')?.value?.trim() || (PROVIDER_CONFIGS[preset]?.chatBaseUrl || ''),
+            customChatModel: document.getElementById('providerCustomChatModel')?.value?.trim() || '',
+            customImgModel: document.getElementById('providerCustomImgModel')?.value?.trim() || ''
+        });
+        applyProviderPreset(preset, entry);
+    });
+}
+function getSelectedAiProvider() {
+    var selected = document.getElementById('refAiProvider')?.value || 'auto';
+    return selected === 'auto' ? null : selected;
+}
+function getSelectedAiAction() {
+    return document.getElementById('refAiAction')?.value || 'auto';
+}
+function resolveProviderForIntent(intent, message) {
+    var forcedProvider = getSelectedAiProvider();
+    if (forcedProvider) return forcedProvider;
+    if (intent === 'generate' || intent === 'tune') return unifiedSession.routeTask('generate_image', message);
+    return unifiedSession.routeTask('chat', message);
+}
+function getReferenceImageForAi() {
+    return currentReferenceDataUrl || targetImg?.src || unifiedSession.generatedImages[unifiedSession.generatedImages.length - 1] || null;
+}
 
 function sendRefAiMessage() {
     var input = document.getElementById('refAiInput');
@@ -955,10 +1542,9 @@ function sendRefAiMessage() {
     if (welcome) welcome.remove();
     appendChatMessage('user', msg);
     input.value = '';
-    var intent = classifyUserIntent(msg);
-    var provider = intent === 'generate'
-        ? unifiedSession.routeTask('generate_image', msg)
-        : unifiedSession.routeTask('chat', msg);
+    var enrichedMessage = applyReferenceMemoryToPrompt(msg);
+    var intent = classifyUserIntent(msg, getSelectedAiAction());
+    var provider = resolveProviderForIntent(intent, msg);
     var apiKey = getAIKey(provider);
     if (!apiKey) {
         appendChatMessage('assistant', 'No API key for ' + (PROVIDER_CONFIGS[provider] ? PROVIDER_CONFIGS[provider].label : provider) + '. Go to Settings.');
@@ -966,13 +1552,19 @@ function sendRefAiMessage() {
     }
     var model = getAIChatModel(provider);
     var baseUrl = getAIBaseUrl(provider);
-    if (intent === 'generate') { doGenerateImage(provider, msg, apiKey, getAIImgModel(provider), baseUrl, chat); return; }
-    if (intent === 'search') { doSearchIntent(msg, provider, model, apiKey, baseUrl, chat); return; }
-    doChatIntent(msg, provider, model, apiKey, baseUrl, chat);
+    rememberSearchQuery(msg, { source: 'ai-guide', provider, intent });
+    if (intent === 'generate') { doGenerateImage(provider, enrichedMessage, apiKey, getAIImgModel(provider), baseUrl, chat); return; }
+    if (intent === 'tune') { doTuneReference(provider, enrichedMessage, apiKey, getAIImgModel(provider), baseUrl, chat); return; }
+    if (intent === 'search') { doSearchIntent(enrichedMessage, provider, model, apiKey, baseUrl, chat); return; }
+    doChatIntent(enrichedMessage, provider, model, apiKey, baseUrl, chat);
 }
 
-function classifyUserIntent(msg) {
+function classifyUserIntent(msg, forcedAction) {
+    if (forcedAction && forcedAction !== 'auto') {
+        return forcedAction;
+    }
     var l = msg.toLowerCase();
+    if (/\b(tune|edit|adjust|refine|variant|remix|iterate)\b/i.test(l) && /\b(reference|image|shot|look)\b/i.test(l)) return 'tune';
     if (/\b(generate|create|make|draw|paint|produce|dall-e|imagen)\b/i.test(l) && /\b(image|picture|scene|visual)\b/i.test(l)) return 'generate';
     if (l.startsWith('generate ') || l.startsWith('create ')) return 'generate';
     if (/\b(search|find|look|browse|fetch|get me|show me|give me)\b/i.test(l)) return 'search';
@@ -1003,7 +1595,11 @@ async function doSearchIntent(msg, provider, model, apiKey, baseUrl, chat) {
         if (localStorage.getItem('sett_tmdb_key')) sources.push('tmdb');
         if (localStorage.getItem('sett_unsplash_key')) sources.push('unsplash');
         if (localStorage.getItem('sett_pexels_key')) sources.push('pexels');
-        var r = await searchService.search(kw, sources, { perPage: 8 });
+        var keywords = kw.split(/\n|,/).map(function(part) { return part.trim(); }).filter(Boolean);
+        var searches = keywords.length ? keywords : [msg];
+        var collected = await searchService.searchMultiQuery(searches, sources, { perPage: 8, limit: 16 });
+        var ranked = searchService.rankResults(collected, msg, searchService.classifyQuery(msg));
+        var r = { results: ranked.slice(0, 16) };
         if (!r.results || !r.results.length) { appendChatMessage('assistant', 'No results.'); return; }
         appendChatMessage('assistant', 'Found ' + r.results.length + ' images:');
         renderChatResults(chat, r.results);
@@ -1015,9 +1611,9 @@ async function getSearchKeywordsFromAI(provider, msg, apiKey, model, baseUrl) {
         var ts = new UnifiedSession();
         var r = await ts.chat(msg, [], {
             provider: provider, chatModel: model, baseUrl: baseUrl, apiKey: apiKey,
-            systemPrompt: 'Extract 3-6 image search keywords. Output ONLY keywords, no explanation.'
+            systemPrompt: 'Turn the request into 3 short search queries for finding cinematic reference imagery. Use one line per query. Include film titles or style terms only when they improve retrieval. Output only the queries.'
         });
-        return r ? r.replace(/["',]/g, '').trim() : msg;
+        return r ? r.replace(/["']/g, '').trim() : msg;
     } catch (e) { return msg; }
 }
 
@@ -1056,6 +1652,46 @@ async function doGenerateImage(provider, prompt, apiKey, imgModel, baseUrl, chat
     } catch (e) { if (thinkEl) thinkEl.remove(); appendChatMessage('assistant', 'Failed: ' + e.message); }
 }
 
+async function doTuneReference(provider, prompt, apiKey, imgModel, baseUrl, chat) {
+    var referenceImage = getReferenceImageForAi();
+    if (!referenceImage) {
+        appendChatMessage('assistant', 'Load or generate a reference first, then ask me to tune it.');
+        return;
+    }
+
+    var thinkEl = appendChatMessage('assistant', 'Tuning current reference...', 'thinking');
+    try {
+        var url = await unifiedSession.generateImage(prompt, {
+            provider: provider,
+            imgModel: imgModel,
+            baseUrl: baseUrl,
+            apiKey: apiKey,
+            referenceImages: [referenceImage]
+        });
+        if (thinkEl) thinkEl.remove();
+        if (!url) {
+            appendChatMessage('assistant', 'No edited image returned.');
+            return;
+        }
+        appendChatMessage('assistant', 'Tuned reference ready:');
+        var c = document.createElement('div'); c.className = 'chat-generated-img';
+        c.innerHTML = '<img src="' + url + '" alt="Tuned reference" /><button class="use-gen-btn">Use as Reference</button>';
+        c.querySelector('button').onclick = function() {
+            var i = new Image(); i.crossOrigin = 'anonymous';
+            i.onload = function() {
+                var cv = document.createElement('canvas'); cv.width = i.width; cv.height = i.height;
+                cv.getContext('2d').drawImage(i, 0, 0);
+                try { setRefImageData(cv.getContext('2d').getImageData(0, 0, cv.width, cv.height)); closeReferencePopup(); } catch(e) { showError('CORS error.'); }
+            };
+            i.src = url;
+        };
+        chat.appendChild(c); chat.scrollTop = chat.scrollHeight;
+    } catch (e) {
+        if (thinkEl) thinkEl.remove();
+        appendChatMessage('assistant', 'Failed: ' + e.message);
+    }
+}
+
 function appendChatMessage(role, text, extraClass) {
     var chat = document.getElementById('refAiChat');
     var el = document.createElement('div');
@@ -1067,35 +1703,22 @@ function appendChatMessage(role, text, extraClass) {
 }
 
 function openSettings() {
+    closeAllModals();
+    initSettingsUi();
     document.getElementById('settingsModal').style.display = 'flex';
-    var fields = ['settOpenAIKey','settOpenAIBaseUrl','settOpenAIChatModel','settOpenAIImgModel','settGeminiKey','settGeminiBaseUrl','settGeminiChatModel','settGeminiImgModel','settTmdbKey','settUnsplashKey','settPexelsKey'];
-    fields.forEach(function(id) {
-        var el = document.getElementById(id); if (!el) return;
-        if (id.indexOf('OpenAIKey') >= 0) el.value = getAIKey('openai');
-        else if (id.indexOf('OpenAIBaseUrl') >= 0) el.value = getAIBaseUrl('openai');
-        else if (id.indexOf('OpenAIChat') >= 0) el.value = getAIChatModel('openai');
-        else if (id.indexOf('OpenAIImg') >= 0) el.value = getAIImgModel('openai');
-        else if (id.indexOf('GeminiKey') >= 0) el.value = getAIKey('gemini');
-        else if (id.indexOf('GeminiBaseUrl') >= 0) el.value = getAIBaseUrl('gemini');
-        else if (id.indexOf('GeminiChat') >= 0) el.value = getAIChatModel('gemini');
-        else if (id.indexOf('GeminiImg') >= 0) el.value = getAIImgModel('gemini');
-        else if (id === 'settTmdbKey') el.value = localStorage.getItem('sett_tmdb_key') || '';
-        else if (id === 'settUnsplashKey') el.value = localStorage.getItem('sett_unsplash_key') || '';
-        else if (id === 'settPexelsKey') el.value = localStorage.getItem('sett_pexels_key') || '';
-    });
+    renderProviderRegistryTable();
+    closeProviderEditor();
+    const tmdb = document.getElementById('settTmdbKey');
+    const unsplash = document.getElementById('settUnsplashKey');
+    const pexels = document.getElementById('settPexelsKey');
+    if (tmdb) tmdb.value = localStorage.getItem('sett_tmdb_key') || '';
+    if (unsplash) unsplash.value = localStorage.getItem('sett_unsplash_key') || '';
+    if (pexels) pexels.value = localStorage.getItem('sett_pexels_key') || '';
     document.getElementById('settSaveBtn').onclick = saveSettings;
 }
 
 function saveSettings() {
     var g = function(id) { var el = document.getElementById(id); return el ? (el.value || '').trim() : ''; };
-    localStorage.setItem('ai_key_openai', g('settOpenAIKey'));
-    localStorage.setItem('ai_baseurl_openai', g('settOpenAIBaseUrl'));
-    localStorage.setItem('ai_chatmodel_openai', g('settOpenAIChatModel') || 'gpt-4o');
-    localStorage.setItem('ai_imgmodel_openai', g('settOpenAIImgModel') || 'dall-e-3');
-    localStorage.setItem('ai_key_gemini', g('settGeminiKey'));
-    localStorage.setItem('ai_baseurl_gemini', g('settGeminiBaseUrl'));
-    localStorage.setItem('ai_chatmodel_gemini', g('settGeminiChatModel') || 'gemini-2.0-flash');
-    localStorage.setItem('ai_imgmodel_gemini', g('settGeminiImgModel') || 'imagen-3.0-generate-001');
     localStorage.setItem('sett_tmdb_key', g('settTmdbKey'));
     localStorage.setItem('sett_unsplash_key', g('settUnsplashKey'));
     localStorage.setItem('sett_pexels_key', g('settPexelsKey'));
@@ -1107,6 +1730,42 @@ function saveSettings() {
 }
 
 function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
+
+function exposeUiActions() {
+    Object.assign(window, {
+        removeImage,
+        processImages,
+        openReferencePopup,
+        closeReferencePopup,
+        resetAdjustments,
+        quickExportResult,
+        showFullExportDialog,
+        closeFullExportDialog,
+        executeFullExport,
+        showLUTExportDialog,
+        closeLUTExportDialog,
+        exportLUT,
+        openSettings,
+        closeSettings,
+        toggleTheme
+    });
+}
+
+function setupModalDismissals() {
+    document.querySelectorAll('.modal-overlay').forEach((overlay) => {
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                overlay.style.display = 'none';
+            }
+        });
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            closeAllModals();
+        }
+    });
+}
 
 // Preset System
 function togglePresetPanel() {
@@ -1166,6 +1825,7 @@ function initPresetPanel() {
     });
 
     document.getElementById('saveCurrentAsPreset')?.addEventListener('click', saveCurrentAsPreset);
+    document.getElementById('exportPresetsBtn')?.addEventListener('click', exportAllPresets);
 }
 
 function renderPresetList(presets) {
@@ -1196,6 +1856,11 @@ function loadPreset(presetId) {
     }
 
     if (preset.adjustments) {
+        updateReferenceMemory({ selectedPresetId: preset.id });
+        unifiedSession.setStyleState({
+            visualStyle: preset.name,
+            colorPalette: (preset.tags || []).join(', ')
+        });
         applyPresetAdjustments(preset.adjustments);
         showStatus(`Preset "${preset.name}" loaded!`, 'success');
     } else {
@@ -1274,11 +1939,30 @@ function saveCurrentAsPreset() {
     const preset = presetManager.savePreset({
         name,
         tags: tags.split(',').map(t => t.trim()),
-        adjustments
+        adjustments,
+        referenceMemory: getReferenceMemory(),
+        sessionStyleState: unifiedSession.styleState || null
     });
 
+    updateReferenceMemory({ selectedPresetId: preset.id });
     showStatus(`Preset "${name}" saved!`, 'success');
     initPresetPanel();
+}
+
+function exportAllPresets() {
+    try {
+        const exportData = presetManager.exportAllPresets();
+        const blob = new Blob([exportData], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `chromamatch-presets-${Date.now()}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        showStatus('Preset export ready.', 'success');
+    } catch (error) {
+        showError(`Preset export failed: ${error.message}`);
+    }
 }
 
 // LUT Export
@@ -1341,6 +2025,7 @@ async function exportLUT() {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    exposeUiActions();
     initializeTheme();
     if (themeToggle) {
         themeToggle.addEventListener('click', toggleTheme);
@@ -1348,6 +2033,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupDragAndDrop();
     setupDashboardInteractions();
+    setupModalDismissals();
     setActiveDashboardWindow('windowThreeUp');
     setActiveToolLayer('layerTransfer');
 

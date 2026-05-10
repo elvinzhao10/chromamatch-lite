@@ -138,7 +138,8 @@
                                 <div class="slider-row">
                                     <label for="algorithmMethod">Method</label>
                                     <select id="algorithmMethod">
-                                        <option value="reinhard-lab" selected>Reinhard LAB</option>
+                                        <option value="hybrid-lab" selected>Hybrid LAB</option>
+                                        <option value="reinhard-lab">Reinhard LAB</option>
                                         <option value="lab-histogram">LAB Histogram</option>
                                         <option value="rgb-mean-std">RGB Mean/Std</option>
                                         <option value="auto">Auto</option>
@@ -392,6 +393,28 @@
 
                 <div class="ref-panel active" id="refPanelAI">
                     <div class="ref-ai-top-hint">Describe the look you want. The AI can search for references, suggest styles, or generate images directly.</div>
+                    <div class="ref-ai-controls">
+                        <div class="ref-ai-control">
+                            <label for="refAiProvider">Provider</label>
+                            <select id="refAiProvider">
+                                <option value="auto">Auto route</option>
+                                <option value="openai">GPT</option>
+                                <option value="gemini">Gemini</option>
+                                <option value="deerapi">DeerAPI</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                        <div class="ref-ai-control">
+                            <label for="refAiAction">Action</label>
+                            <select id="refAiAction">
+                                <option value="auto">Auto detect</option>
+                                <option value="search">Search references</option>
+                                <option value="generate">Generate reference</option>
+                                <option value="tune">Tune current reference</option>
+                                <option value="guide">Style guidance</option>
+                            </select>
+                        </div>
+                    </div>
                     <div class="ref-ai-chat" id="refAiChat">
                         <div class="ref-ai-welcome">
                             <p>What kind of color look are you going for?</p>
@@ -415,16 +438,14 @@
                         <button type="button" id="refPopupDoSearch">Search</button>
                     </div>
                     <div class="ref-source-row">
-                        <label>Sources:</label>
+                        <label>Mode:</label>
                         <select id="refPopupSourceSelect">
-                            <option value="smart">Smart (Wikimedia + Flickr)</option>
-                            <option value="all">All sources</option>
-                            <option value="tmdb">TMDB (film posters)</option>
-                            <option value="wikimedia">Wikimedia Commons</option>
-                            <option value="flickr">Flickr</option>
-                            <option value="unsplash">Unsplash</option>
-                            <option value="pexels">Pexels</option>
+                            <option value="ai">AI Assisted</option>
+                            <option value="cinema">Cinema Frames</option>
+                            <option value="photo">Photo References</option>
+                            <option value="archive">Archive / Documentary</option>
                         </select>
+                        <span class="ref-source-hint" id="refSourceHint">AI expands fuzzy descriptions and searches across the best sources.</span>
                     </div>
                     <div class="ref-popup-chips">
                         <button type="button" data-search="Blade Runner 2049 cinematography">Blade Runner 2049</button>
@@ -469,56 +490,104 @@
             </div>
             <div class="settings-body">
                 <div class="settings-section">
-                    <h4>OpenAI (Chat + DALL-E Image Gen)</h4>
-                    <div class="settings-row">
-                        <label>API Key:</label>
-                        <input type="password" id="settOpenAIKey" placeholder="sk-..." />
-                        <span class="settings-hint">Used for reasoning, planning, chat, DALL-E images</span>
+                    <h4>Provider Setup</h4>
+                    <div class="settings-guide-grid">
+                        <div class="settings-guide-card">
+                            <div class="settings-guide-title">Essential</div>
+                            <ul class="settings-guide-list">
+                                <li>Pick a provider preset</li>
+                                <li>Add an API key</li>
+                                <li>Choose a chat model</li>
+                                <li>Choose an image model if you want generate or tune</li>
+                            </ul>
+                        </div>
+                        <div class="settings-guide-card">
+                            <div class="settings-guide-title">Additional</div>
+                            <ul class="settings-guide-list">
+                                <li>Rename the provider row so it is easy to recognize</li>
+                                <li>Override the base URL for gateways or self-hosted endpoints</li>
+                                <li>Refresh model choices from the provider when supported</li>
+                            </ul>
+                        </div>
                     </div>
-                    <div class="settings-row">
-                        <label>Base URL (optional):</label>
-                        <input type="text" id="settOpenAIBaseUrl" placeholder="https://api.openai.com/v1" />
+                    <div class="provider-manager-toolbar">
+                        <div class="provider-manager-copy">
+                            Add one of the built-in provider presets, then edit it any time from the table below.
+                        </div>
+                        <button type="button" class="export-btn" id="addProviderBtn">Add Provider</button>
                     </div>
-                    <div class="settings-row">
-                        <label>Chat Model:</label>
-                        <select id="settOpenAIChatModel">
-                            <option value="gpt-4o">GPT-4o</option>
-                            <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                            <option value="gpt-3.5-turbo">GPT-3.5 Turbo (faster)</option>
-                        </select>
-                    </div>
-                    <div class="settings-row">
-                        <label>Image Model:</label>
-                        <select id="settOpenAIImgModel">
-                            <option value="dall-e-3">DALL-E 3 (best quality)</option>
-                            <option value="dall-e-2">DALL-E 2 (faster)</option>
-                        </select>
+                    <div class="provider-table-wrap">
+                        <table class="provider-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Preset</th>
+                                    <th>Status</th>
+                                    <th>Chat Model</th>
+                                    <th>Image Model</th>
+                                    <th>Base URL</th>
+                                    <th>Docs</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="providerRegistryTableBody"></tbody>
+                        </table>
                     </div>
                 </div>
                 <div class="settings-section">
-                    <h4>Google Gemini (Chat + Imagen/Nano Banana)</h4>
-                    <div class="settings-row">
-                        <label>API Key:</label>
-                        <input type="password" id="settGeminiKey" placeholder="AIza..." />
-                        <span class="settings-hint">Used for image editing, cinematic renders, photorealism</span>
-                    </div>
-                    <div class="settings-row">
-                        <label>Base URL (optional):</label>
-                        <input type="text" id="settGeminiBaseUrl" placeholder="https://generativelanguage.googleapis.com/v1beta" />
-                    </div>
-                    <div class="settings-row">
-                        <label>Chat Model:</label>
-                        <select id="settGeminiChatModel">
-                            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                        </select>
-                    </div>
-                    <div class="settings-row">
-                        <label>Image Model:</label>
-                        <select id="settGeminiImgModel">
-                            <option value="imagen-3.0-generate-001">Imagen 3 (Nano Banana)</option>
-                        </select>
+                    <h4>Add or Edit Provider</h4>
+                    <div class="provider-editor-card" id="providerEditorCard" style="display:none;">
+                        <div class="provider-editor-header">
+                            <div>
+                                <div class="settings-guide-title" id="providerEditorTitle">Add Provider</div>
+                                <div class="settings-hint" id="providerEditorHint">Choose a preset, then fill the required fields.</div>
+                            </div>
+                            <button type="button" class="provider-editor-close" id="providerEditorClose">×</button>
+                        </div>
+                        <div class="provider-editor-grid">
+                            <div class="settings-row">
+                                <label>Preset</label>
+                                <select id="providerPresetSelect"></select>
+                                <span class="settings-hint">Presets keep the built-in provider defaults and docs links.</span>
+                            </div>
+                            <div class="settings-row">
+                                <label>Display Name</label>
+                                <input type="text" id="providerDisplayName" placeholder="e.g. Main GPT key" />
+                            </div>
+                            <div class="settings-row">
+                                <label>API Key</label>
+                                <input type="password" id="providerApiKey" placeholder="Required" />
+                            </div>
+                            <div class="settings-row">
+                                <label>Base URL</label>
+                                <input type="text" id="providerBaseUrl" placeholder="Optional unless custom gateway" />
+                            </div>
+                            <div class="settings-row">
+                                <label>Chat Model</label>
+                                <select id="providerChatModel"></select>
+                                <span class="settings-hint">Starts with the latest built-in options. You can refresh from the API when supported.</span>
+                            </div>
+                            <div class="settings-row">
+                                <label>Custom Chat Model ID</label>
+                                <input type="text" id="providerCustomChatModel" placeholder="Optional override" />
+                            </div>
+                            <div class="settings-row">
+                                <label>Image Model</label>
+                                <select id="providerImgModel"></select>
+                            </div>
+                            <div class="settings-row">
+                                <label>Custom Image Model ID</label>
+                                <input type="text" id="providerCustomImgModel" placeholder="Optional override" />
+                            </div>
+                        </div>
+                        <div class="provider-editor-footer">
+                            <a href="#" target="_blank" rel="noopener noreferrer" id="providerDocsLink">Provider docs</a>
+                            <div class="provider-editor-actions">
+                                <button type="button" class="secondary-btn" id="refreshProviderModelsBtn">Refresh Models</button>
+                                <button type="button" class="secondary-btn" id="deleteProviderBtn" style="display:none;">Delete</button>
+                                <button type="button" class="export-btn" id="saveProviderBtn">Save Provider</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="settings-section">
@@ -541,7 +610,7 @@
                 </div>
                 <div class="settings-footer">
                     <button type="button" id="settSaveBtn" class="export-btn">Save All Settings</button>
-                    <span class="settings-note">All keys stored locally in your browser only.</span>
+                    <span class="settings-note">Provider rows save with “Save Provider”. Search-source keys save here. All keys stay local in your browser.</span>
                 </div>
             </div>
         </div>
