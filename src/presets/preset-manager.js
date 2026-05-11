@@ -26,10 +26,7 @@ class PresetManager {
     }
 
     getAllPresets() {
-        return [
-            ...this.presetLibrary.map(preset => ({ ...preset, builtIn: true })),
-            ...this.customPresets.map(preset => ({ ...preset, builtIn: false }))
-        ];
+        return [...this.presetLibrary, ...this.customPresets];
     }
 
     getPresetByName(name) {
@@ -93,17 +90,15 @@ class PresetManager {
     }
 
     duplicatePreset(id) {
-        const preset = this.getAllPresets().find(p => p.id === id);
+        const preset = this.customPresets.find(p => p.id === id);
         if (preset) {
             const newPreset = {
                 ...JSON.parse(JSON.stringify(preset)),
                 id: `preset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 name: `${preset.name} (Copy)`,
                 createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                builtIn: false
+                updatedAt: new Date().toISOString()
             };
-            delete newPreset.builtIn;
             this.customPresets.push(newPreset);
             this.saveToStorage();
             return newPreset;
@@ -129,8 +124,8 @@ class PresetManager {
         try {
             const data = JSON.parse(jsonString);
 
-            if (!data.name || !data.adjustments) {
-                throw new Error('Invalid preset format: missing name or adjustments');
+            if (!data.name || !data.graph) {
+                throw new Error('Invalid preset format: missing name or graph');
             }
 
             const newPreset = {
@@ -138,9 +133,7 @@ class PresetManager {
                 version: data.version || '1.0',
                 tags: data.tags || [],
                 thumbnail: data.thumbnail || null,
-                adjustments: data.adjustments,
-                referenceMemory: data.referenceMemory || null,
-                sessionStyleState: data.sessionStyleState || null,
+                graph: data.graph,
                 id: `preset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
@@ -182,7 +175,7 @@ class PresetManager {
 
             let importedCount = 0;
             for (const preset of data.presets) {
-                if (preset.name && preset.adjustments) {
+                if (preset.name && preset.graph) {
                     const newPreset = {
                         ...preset,
                         id: `preset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${importedCount}`,
@@ -190,7 +183,6 @@ class PresetManager {
                         updatedAt: new Date().toISOString(),
                         imported: true
                     };
-                    delete newPreset.builtIn;
                     this.customPresets.push(newPreset);
                     importedCount++;
                 }

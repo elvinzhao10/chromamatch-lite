@@ -15,117 +15,7 @@ class ImageAdjustments {
             shadows: 0,
             whites: 0,
             blacks: 0,
-            saturation: 0,
-            shadowWheelAmount: 0,
-            midtoneWheelAmount: 0,
-            highlightWheelAmount: 0,
-            shadowWheelColor: '#3a6cff',
-            midtoneWheelColor: '#ffffff',
-            highlightWheelColor: '#ffb347'
-        };
-        this.curvePoints = this.defaultCurvePoints();
-    }
-
-    defaultCurvePoints() {
-        return [
-            { x: 0, y: 0 },
-            { x: 0.18, y: 0.18 },
-            { x: 0.36, y: 0.36 },
-            { x: 0.62, y: 0.62 },
-            { x: 0.82, y: 0.82 },
-            { x: 1, y: 1 }
-        ];
-    }
-
-    srgbToLinear(value) {
-        const normalized = Math.max(0, Math.min(1, value));
-        if (normalized <= 0.04045) return normalized / 12.92;
-        return Math.pow((normalized + 0.055) / 1.055, 2.4);
-    }
-
-    linearToSrgb(value) {
-        const normalized = Math.max(0, value);
-        if (normalized <= 0.0031308) return normalized * 12.92;
-        return 1.055 * Math.pow(normalized, 1 / 2.4) - 0.055;
-    }
-
-    softClip(value, knee = 0.94) {
-        if (value <= knee) return Math.max(0, value);
-        const shoulder = 1 - knee;
-        return knee + shoulder * (1 - Math.exp(-(value - knee) / Math.max(shoulder, 1e-6)));
-    }
-
-    smoothstep(edge0, edge1, x) {
-        const t = Math.max(0, Math.min(1, (x - edge0) / Math.max(edge1 - edge0, 1e-6)));
-        return t * t * (3 - 2 * t);
-    }
-
-    hexToLinearRgb(hex) {
-        const safeHex = (hex || '#ffffff').replace('#', '');
-        const expanded = safeHex.length === 3 ? safeHex.split('').map((char) => char + char).join('') : safeHex;
-        const int = parseInt(expanded, 16);
-        const r = ((int >> 16) & 255) / 255;
-        const g = ((int >> 8) & 255) / 255;
-        const b = (int & 255) / 255;
-        return {
-            r: this.srgbToLinear(r),
-            g: this.srgbToLinear(g),
-            b: this.srgbToLinear(b)
-        };
-    }
-
-    evaluateCurve(x) {
-        const points = this.curvePoints;
-        if (x <= points[0].x) return points[0].y;
-        if (x >= points[points.length - 1].x) return points[points.length - 1].y;
-        for (let i = 0; i < points.length - 1; i++) {
-            const a = points[i];
-            const b = points[i + 1];
-            if (x >= a.x && x <= b.x) {
-                const t = (x - a.x) / Math.max(b.x - a.x, 1e-6);
-                const p0 = points[Math.max(0, i - 1)];
-                const p1 = a;
-                const p2 = b;
-                const p3 = points[Math.min(points.length - 1, i + 2)];
-                const t2 = t * t;
-                const t3 = t2 * t;
-                const value = 0.5 * (
-                    (2 * p1.y) +
-                    (-p0.y + p2.y) * t +
-                    (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
-                    (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
-                );
-                const minY = Math.min(p1.y, p2.y) - 0.18;
-                const maxY = Math.max(p1.y, p2.y) + 0.18;
-                return Math.max(0, Math.min(1, Math.min(maxY, Math.max(minY, value))));
-            }
-        }
-        return x;
-    }
-
-    applyCurveValue(x) {
-        const clamped = Math.max(0, Math.min(1, x));
-        return this.evaluateCurve(clamped);
-    }
-
-    applyColorWheel(rgb, targetColor, amount, mask) {
-        if (!amount || mask <= 0) return rgb;
-        const influence = (amount / 100) * mask * 0.32;
-        return {
-            r: rgb.r + (targetColor.r - rgb.r) * influence,
-            g: rgb.g + (targetColor.g - rgb.g) * influence,
-            b: rgb.b + (targetColor.b - rgb.b) * influence
-        };
-    }
-
-    compressRange(rgb) {
-        const maxChannel = Math.max(rgb.r, rgb.g, rgb.b);
-        if (maxChannel <= 1.0) return rgb;
-        const scale = 1 / maxChannel;
-        return {
-            r: rgb.r * scale,
-            g: rgb.g * scale,
-            b: rgb.b * scale
+            saturation: 0
         };
     }
 
@@ -376,106 +266,85 @@ class ImageAdjustments {
         const whitesFactor = adjustments.whites / 100;
         const blacksFactor = adjustments.blacks / 100;
         const satFactor = (adjustments.saturation + 100) / 100;
-        const shadowWheelColor = this.hexToLinearRgb(adjustments.shadowWheelColor);
-        const midtoneWheelColor = this.hexToLinearRgb(adjustments.midtoneWheelColor);
-        const highlightWheelColor = this.hexToLinearRgb(adjustments.highlightWheelColor);
 
         for (let i = 0; i < data.length; i += 4) {
-            let r = this.srgbToLinear(data[i] / 255);
-            let g = this.srgbToLinear(data[i + 1] / 255);
-            let b = this.srgbToLinear(data[i + 2] / 255);
-            const baseLum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let r = data[i];
+            let g = data[i + 1];
+            let b = data[i + 2];
 
             // Temperature
             if (adjustments.temperature !== 0) {
                 if (tempFactor > 0) {
-                    r *= 1 + tempFactor * 0.18;
-                    b *= 1 - tempFactor * 0.14;
+                    r = Math.min(255, r + tempFactor * 30);
+                    b = Math.max(0, b - tempFactor * 20);
                 } else {
-                    r *= 1 + tempFactor * 0.12;
-                    b *= 1 - tempFactor * 0.18;
+                    r = Math.max(0, r + tempFactor * 20);
+                    b = Math.min(255, b - tempFactor * 30);
                 }
             }
 
             // Tint
             if (adjustments.tint !== 0) {
-                r *= 1 + tintFactor * 0.08;
-                g *= 1 - tintFactor * 0.12;
-                b *= 1 + tintFactor * 0.08;
+                r = Math.max(0, Math.min(255, r + tintFactor * 15));
+                g = Math.max(0, Math.min(255, g - tintFactor * 15));
+                b = Math.max(0, Math.min(255, b + tintFactor * 15));
             }
 
             // Exposure
             if (adjustments.exposure !== 0) {
-                r *= expFactor;
-                g *= expFactor;
-                b *= expFactor;
+                r = Math.min(255, r * expFactor);
+                g = Math.min(255, g * expFactor);
+                b = Math.min(255, b * expFactor);
             }
-            ({ r, g, b } = this.compressRange({ r, g, b }));
 
             // Contrast
             if (adjustments.contrast !== 0) {
-                r = ((r - 0.5) * contFactor) + 0.5;
-                g = ((g - 0.5) * contFactor) + 0.5;
-                b = ((b - 0.5) * contFactor) + 0.5;
+                r = Math.max(0, Math.min(255, contFactor * (r - 128) + 128));
+                g = Math.max(0, Math.min(255, contFactor * (g - 128) + 128));
+                b = Math.max(0, Math.min(255, contFactor * (b - 128) + 128));
             }
 
-            // Tone masks based on pre-exposure luminance so controls stay responsive.
+            // Highlights, Shadows, Whites, Blacks — single luminance calculation
             if (adjustments.highlights !== 0 || adjustments.shadows !== 0 ||
                 adjustments.whites !== 0 || adjustments.blacks !== 0) {
-                const highlightMask = this.smoothstep(0.45, 1, baseLum);
-                const shadowMask = 1 - this.smoothstep(0, 0.55, baseLum);
-                const whiteMask = this.smoothstep(0.72, 1, baseLum);
-                const blackMask = 1 - this.smoothstep(0, 0.28, baseLum);
-
-                if (adjustments.highlights !== 0) {
-                    const adj = highlightFactor * highlightMask * 0.2;
-                    r += adj;
-                    g += adj;
-                    b += adj;
+                const lum = 0.299 * (r / 255) + 0.587 * (g / 255) + 0.114 * (b / 255);
+                if (adjustments.highlights !== 0 && lum > 0.5) {
+                    const adj = highlightFactor * (lum - 0.5) * 2 * 50;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
                 }
-                if (adjustments.shadows !== 0) {
-                    const adj = shadowFactor * shadowMask * 0.24;
-                    r += adj;
-                    g += adj;
-                    b += adj;
+                if (adjustments.shadows !== 0 && lum < 0.5) {
+                    const adj = shadowFactor * (0.5 - lum) * 2 * 50;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
                 }
-                if (adjustments.whites !== 0) {
-                    const lift = whitesFactor * whiteMask * (adjustments.exposure < 0 ? 0.34 : 0.24);
-                    r = r * (1 + lift * 0.1) + lift;
-                    g = g * (1 + lift * 0.1) + lift;
-                    b = b * (1 + lift * 0.1) + lift;
+                if (adjustments.whites !== 0 && lum > 0.8) {
+                    const adj = whitesFactor * (lum - 0.8) * 5 * 30;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
                 }
-                if (adjustments.blacks !== 0) {
-                    const crush = blacksFactor * blackMask * (adjustments.exposure < 0 ? 0.38 : 0.26);
-                    r -= crush;
-                    g -= crush;
-                    b -= crush;
+                if (adjustments.blacks !== 0 && lum < 0.2) {
+                    const adj = blacksFactor * (0.2 - lum) * 5 * 30;
+                    r = Math.max(0, Math.min(255, r + adj));
+                    g = Math.max(0, Math.min(255, g + adj));
+                    b = Math.max(0, Math.min(255, b + adj));
                 }
             }
 
             // Saturation
             if (adjustments.saturation !== 0) {
-                const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                r = lum + satFactor * (r - lum);
-                g = lum + satFactor * (g - lum);
-                b = lum + satFactor * (b - lum);
+                const lum = 0.299 * (r / 255) + 0.587 * (g / 255) + 0.114 * (b / 255);
+                r = Math.max(0, Math.min(255, (lum + satFactor * (r / 255 - lum)) * 255));
+                g = Math.max(0, Math.min(255, (lum + satFactor * (g / 255 - lum)) * 255));
+                b = Math.max(0, Math.min(255, (lum + satFactor * (b / 255 - lum)) * 255));
             }
 
-            const shadowWheelMask = 1 - this.smoothstep(0.15, 0.45, baseLum);
-            const midtoneWheelMask = this.smoothstep(0.18, 0.45, baseLum) * (1 - this.smoothstep(0.58, 0.86, baseLum));
-            const highlightWheelMask = this.smoothstep(0.58, 0.9, baseLum);
-            ({ r, g, b } = this.applyColorWheel({ r, g, b }, shadowWheelColor, adjustments.shadowWheelAmount, shadowWheelMask));
-            ({ r, g, b } = this.applyColorWheel({ r, g, b }, midtoneWheelColor, adjustments.midtoneWheelAmount, midtoneWheelMask));
-            ({ r, g, b } = this.applyColorWheel({ r, g, b }, highlightWheelColor, adjustments.highlightWheelAmount, highlightWheelMask));
-
-            r = this.applyCurveValue(r);
-            g = this.applyCurveValue(g);
-            b = this.applyCurveValue(b);
-
-            ({ r, g, b } = this.compressRange({ r, g, b }));
-            data[i] = Math.round(this.softClip(this.linearToSrgb(r)) * 255);
-            data[i + 1] = Math.round(this.softClip(this.linearToSrgb(g)) * 255);
-            data[i + 2] = Math.round(this.softClip(this.linearToSrgb(b)) * 255);
+            data[i]     = r;
+            data[i + 1] = g;
+            data[i + 2] = b;
         }
 
         return adjustedImageData;
@@ -487,51 +356,6 @@ class ImageAdjustments {
      */
     updateAdjustments(newAdjustments) {
         this.currentAdjustments = { ...this.currentAdjustments, ...newAdjustments };
-    }
-
-    getCurvePoints() {
-        return this.curvePoints.map((point) => ({ ...point }));
-    }
-
-    setCurvePoints(points) {
-        if (!Array.isArray(points) || points.length < 2) {
-            this.curvePoints = this.defaultCurvePoints();
-            return;
-        }
-        this.curvePoints = points.map((point, index) => ({
-            x: Math.max(0, Math.min(1, index === 0 ? 0 : index === points.length - 1 ? 1 : point.x)),
-            y: Math.max(0, Math.min(1, point.y))
-        })).sort((a, b) => a.x - b.x);
-    }
-
-    updateCurvePoint(index, x, y) {
-        if (index <= 0 || index >= this.curvePoints.length - 1) return;
-        const prevX = this.curvePoints[index - 1].x + 0.05;
-        const nextX = this.curvePoints[index + 1].x - 0.05;
-        this.curvePoints[index] = {
-            x: Math.max(prevX, Math.min(nextX, x)),
-            y: Math.max(0, Math.min(1, y))
-        };
-    }
-
-    addCurvePoint(x, y) {
-        if (this.curvePoints.length >= 8) return this.curvePoints.length - 2;
-        const pointRef = {
-            x: Math.max(0.05, Math.min(0.95, x)),
-            y: Math.max(0, Math.min(1, y))
-        };
-        const next = [...this.curvePoints, pointRef].sort((a, b) => a.x - b.x);
-        this.curvePoints = next;
-        return this.curvePoints.indexOf(pointRef);
-    }
-
-    removeCurvePoint(index) {
-        if (index <= 0 || index >= this.curvePoints.length - 1 || this.curvePoints.length <= 4) return;
-        this.curvePoints.splice(index, 1);
-    }
-
-    resetCurvePoints() {
-        this.curvePoints = this.defaultCurvePoints();
     }
 
     /**
@@ -547,15 +371,8 @@ class ImageAdjustments {
             shadows: 0,
             whites: 0,
             blacks: 0,
-            saturation: 0,
-            shadowWheelAmount: 0,
-            midtoneWheelAmount: 0,
-            highlightWheelAmount: 0,
-            shadowWheelColor: '#3a6cff',
-            midtoneWheelColor: '#ffffff',
-            highlightWheelColor: '#ffb347'
+            saturation: 0
         };
-        this.resetCurvePoints();
     }
 }
 

@@ -1,151 +1,43 @@
-const UNIFIED_SESSION_VERSION = '2.0';
-
-function trimTrailingSlash(value) {
-    return (value || '').replace(/\/+$/, '');
-}
-
-function ensureArray(value) {
-    return Array.isArray(value) ? value : [];
-}
-
-function joinDefined(parts, separator = '\n') {
-    return parts.filter(Boolean).join(separator).trim();
-}
-
-function parseOpenAIText(data) {
-    if (typeof data?.output_text === 'string' && data.output_text) {
-        return data.output_text;
-    }
-
-    const output = ensureArray(data?.output);
-    const chunks = [];
-
-    for (const item of output) {
-        for (const content of ensureArray(item?.content)) {
-            if (content?.type === 'output_text' && content.text) {
-                chunks.push(content.text);
-            }
-        }
-    }
-
-    if (chunks.length) {
-        return chunks.join('\n').trim();
-    }
-
-    return data?.choices?.[0]?.message?.content || '';
-}
-
-function parseGeminiText(data) {
-    const parts = ensureArray(data?.candidates?.[0]?.content?.parts);
-    return parts
-        .map((part) => part?.text)
-        .filter(Boolean)
-        .join('\n')
-        .trim();
-}
-
-function parseGeminiImage(data) {
-    const parts = ensureArray(data?.candidates?.[0]?.content?.parts);
-    const imagePart = parts.find((part) => part?.inlineData?.data || part?.inline_data?.data);
-    const inlineData = imagePart?.inlineData || imagePart?.inline_data;
-
-    if (!inlineData?.data) {
-        return null;
-    }
-
-    return `data:${inlineData.mimeType || inlineData.mime_type || 'image/png'};base64,${inlineData.data}`;
-}
+const UNIFIED_SESSION_VERSION = '1.0';
 
 const PROVIDER_CONFIGS = {
     openai: {
-        id: 'openai',
-        label: 'GPT',
-        docsUrl: 'https://platform.openai.com/docs/models',
-        setupBlurb: 'Best for reasoning, planning, coding, and structured help.',
+        label: 'OpenAI',
         chatBaseUrl: 'https://api.openai.com/v1',
         chatEndpoint: 'chat/completions',
-        imageBaseUrl: 'https://api.openai.com/v1',
-        imageGenerateEndpoint: 'images/generations',
-        imageEditEndpoint: 'images/edits',
+        imgEndpoint: 'images/generations',
         chatModels: [
-            { value: 'gpt-5.5', label: 'GPT-5.5' },
-            { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-            { value: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
-            { value: 'gpt-4.1', label: 'GPT-4.1' }
+            { value: 'gpt-4o', label: 'GPT-4o' },
+            { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+            { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (faster)' }
         ],
         imgModels: [
-            { value: 'gpt-image-2', label: 'GPT Image 2' },
-            { value: 'gpt-image-1.5', label: 'GPT Image 1.5' },
-            { value: 'gpt-image-1', label: 'GPT Image 1' },
-            { value: 'gpt-image-1-mini', label: 'GPT Image 1 Mini' }
+            { value: 'dall-e-3', label: 'DALL-E 3 (best quality)' },
+            { value: 'dall-e-2', label: 'DALL-E 2 (faster)' }
         ],
-        authHeaders: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
-        parseChatReply: parseOpenAIText
+        authHeader: (key) => ({ 'Authorization': `Bearer ${key}` }),
+        parseChatReply: (data) => data.choices?.[0]?.message?.content,
+        parseImageReply: (data) => data.data?.[0]?.url
     },
     gemini: {
-        id: 'gemini',
-        label: 'Gemini',
-        docsUrl: 'https://ai.google.dev/gemini-api/docs/models',
-        setupBlurb: 'Best for multimodal generation, image tuning, and cinematic visual workflows.',
+        label: 'Google Gemini',
         chatBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
         chatEndpoint: 'models/{model}:generateContent',
-        imageBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        imageGenerateEndpoint: 'models/{model}:generateContent',
-        imageEditEndpoint: 'models/{model}:generateContent',
+        imgEndpoint: 'models/imagen-3.0-generate-001:predict',
         chatModels: [
-            { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-            { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-            { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' }
+            { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+            { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+            { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' }
         ],
         imgModels: [
-            { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image Preview' },
-            { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' },
-            { value: 'gemini-2.0-flash-preview-image-generation', label: 'Gemini Image Preview' }
+            { value: 'imagen-3.0-generate-001', label: 'Imagen 3 (nanabanana)' }
         ],
-        parseChatReply: parseGeminiText
-    },
-    deerapi: {
-        id: 'deerapi',
-        label: 'DeerAPI',
-        docsUrl: 'https://apidoc.deerapi.com/',
-        setupBlurb: 'OpenAI-compatible gateway when you want one endpoint that can proxy multiple model families.',
-        chatBaseUrl: 'https://api.deerapi.com/v1',
-        chatEndpoint: 'chat/completions',
-        imageBaseUrl: 'https://api.deerapi.com/v1',
-        imageGenerateEndpoint: 'images/generations',
-        imageEditEndpoint: 'images/edits',
-        chatModels: [
-            { value: 'gpt-5.5', label: 'GPT-5.5 via DeerAPI' },
-            { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini via DeerAPI' },
-            { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash via DeerAPI' },
-            { value: 'claude-sonnet-4', label: 'Claude Sonnet 4 via DeerAPI' }
-        ],
-        imgModels: [
-            { value: 'gpt-image-2', label: 'GPT Image 2 via DeerAPI' },
-            { value: 'gpt-image-1.5', label: 'GPT Image 1.5 via DeerAPI' },
-            { value: 'gpt-image-1', label: 'GPT Image 1 via DeerAPI' }
-        ],
-        authHeaders: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
-        parseChatReply: parseOpenAIText
-    },
-    custom: {
-        id: 'custom',
-        label: 'Custom',
-        docsUrl: '',
-        setupBlurb: 'For any OpenAI-compatible endpoint with your own base URL and model IDs.',
-        chatBaseUrl: '',
-        chatEndpoint: 'chat/completions',
-        imageBaseUrl: '',
-        imageGenerateEndpoint: 'images/generations',
-        imageEditEndpoint: 'images/edits',
-        chatModels: [
-            { value: 'custom-chat-model', label: 'Custom Chat Model' }
-        ],
-        imgModels: [
-            { value: 'custom-image-model', label: 'Custom Image Model' }
-        ],
-        authHeaders: (apiKey) => apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-        parseChatReply: parseOpenAIText
+        authHeader: (key) => ({ 'x-goog-api-key': key }),
+        parseChatReply: (data) => data.candidates?.[0]?.content?.parts?.[0]?.text,
+        parseImageReply: (data) => {
+            const b64 = data.predictions?.[0]?.bytesBase64Encoded;
+            return b64 ? `data:image/png;base64,${b64}` : null;
+        }
     }
 };
 
@@ -161,31 +53,28 @@ class UnifiedSession {
         this.load();
     }
 
+    /* ─── Persistence ─────────────────────────────────────── */
     save() {
         const data = {
             version: this.version,
-            messages: this.messages.slice(-40),
+            messages: this.messages,
             generatedImages: this.generatedImages.slice(-20),
-            summaries: this.summaries.slice(-6),
+            summaries: this.summaries.slice(-5),
             styleState: this.styleState,
             characterState: this.characterState,
             activeProvider: this.activeProvider
         };
-
-        try {
-            localStorage.setItem('cm_unified_session', JSON.stringify(data));
-        } catch {}
+        try { localStorage.setItem('cm_unified_session', JSON.stringify(data)); } catch {}
     }
 
     load() {
         try {
             const raw = localStorage.getItem('cm_unified_session');
             if (!raw) return;
-
             const data = JSON.parse(raw);
-            this.messages = ensureArray(data.messages);
-            this.generatedImages = ensureArray(data.generatedImages);
-            this.summaries = ensureArray(data.summaries);
+            this.messages = data.messages || [];
+            this.generatedImages = data.generatedImages || [];
+            this.summaries = data.summaries || [];
             this.styleState = data.styleState || null;
             this.characterState = data.characterState || null;
             this.activeProvider = data.activeProvider || null;
@@ -202,443 +91,321 @@ class UnifiedSession {
         this.save();
     }
 
-    addMessage(role, text = '', images = [], metadata = {}) {
-        const message = {
-            role,
-            text,
-            images: ensureArray(images),
-            metadata
-        };
-
-        if (metadata.provider) {
-            message.provider = metadata.provider;
-        }
-
-        this.messages.push(message);
+    /* ─── Message Management ──────────────────────────────── */
+    addMessage(role, text, images, metadata) {
+        const msg = { role, text: text || '', images: images || [], metadata: metadata || {} };
+        if (metadata?.provider) msg.provider = metadata.provider;
+        this.messages.push(msg);
         this.maybeCompress();
         this.save();
-        return message;
+        return msg;
     }
 
     maybeCompress() {
-        if (this.messages.length <= 32) return;
-
-        const oldMessages = this.messages.slice(0, this.messages.length - 18);
-        const summary = this.summarizeMessages(oldMessages);
-        if (summary) {
-            this.summaries.push(summary);
-        }
-        this.messages = this.messages.slice(-18);
+        if (this.messages.length <= 30) return;
+        const old = this.messages.slice(0, this.messages.length - 20);
+        const summary = this.summarizeMessages(old);
+        this.summaries.push(summary);
+        this.messages = this.messages.slice(-20);
     }
 
-    summarizeMessages(messages) {
-        const transcript = messages
-            .map((message) => `${message.role}: ${(message.text || '').trim()}`)
-            .filter((line) => line !== 'assistant:' && line !== 'user:' && line !== 'system:')
+    summarizeMessages(msgs) {
+        const userTexts = msgs
+            .filter(m => m.role === 'user')
+            .map(m => m.text)
             .join(' | ');
-
-        return transcript.slice(0, 900);
+        return userTexts.substring(0, 500);
     }
 
+    /* ─── Context Assembly ────────────────────────────────── */
     getRelevantContext() {
-        const context = [];
+        const ctx = [];
 
         if (this.summaries.length > 0) {
-            context.push({
+            ctx.push({
                 role: 'system',
-                text: `Session summary: ${this.summaries.slice(-3).join(' || ')}`
+                text: `[Session history summary]: ${this.summaries.slice(-3).join('; ')}`
             });
         }
 
         if (this.styleState) {
-            context.push({
+            ctx.push({
                 role: 'system',
-                text: `Style state: ${JSON.stringify(this.styleState)}`
+                text: `[Current visual style]: ${JSON.stringify(this.styleState)}`
             });
         }
 
         if (this.characterState) {
-            context.push({
+            ctx.push({
                 role: 'system',
-                text: `Character state: ${JSON.stringify(this.characterState)}`
+                text: `[Current character]: ${JSON.stringify(this.characterState)}`
             });
         }
 
-        context.push(...this.messages.slice(-12));
-        return context;
+        const recent = this.messages.slice(-15);
+        ctx.push(...recent);
+
+        return ctx;
     }
 
-    setStyleState(nextState) {
-        this.styleState = { ...(this.styleState || {}), ...nextState };
+    /* ─── Style / Character State ─────────────────────────── */
+    setStyleState(state) {
+        this.styleState = { ...this.styleState, ...state };
         this.save();
     }
 
-    setCharacterState(nextState) {
-        this.characterState = { ...(this.characterState || {}), ...nextState };
+    setCharacterState(state) {
+        this.characterState = { ...this.characterState, ...state };
         this.save();
     }
 
     addGeneratedImage(url) {
-        if (!url) return;
         this.generatedImages.push(url);
-        this.generatedImages = this.generatedImages.slice(-20);
+        if (this.generatedImages.length > 20) {
+            this.generatedImages = this.generatedImages.slice(-20);
+        }
         this.save();
     }
 
-    routeTask(task, userMessage = '') {
-        const lower = `${task || ''} ${userMessage || ''}`.toLowerCase();
+    /* ─── Task Router ──────────────────────────────────────── */
+    routeTask(task, userMsg) {
+        const lower = (userMsg || task).toLowerCase();
 
-        if (/\b(edit|tune|refine|variant|upscale|retouch|photoreal|cinematic)\b/.test(lower)) {
+        if (/\b(image.?edit|retouch|enhance|modify|refine|cinematic|photo.?real|nano.?banana)\b/i.test(lower)) {
             return 'gemini';
         }
-
-        if (/\b(code|reason|plan|analy[sz]e|table|json|structure|compare)\b/.test(lower)) {
+        if (/\b(code|debug|explain|reason|analyze|plan|structured|json|data|table|logic)\b/i.test(lower)) {
             return 'openai';
         }
-
-        if (/\b(generate|render|draw|illustrate|image)\b/.test(lower)) {
-            return /\b(ui|overlay|type|typography|diagram)\b/.test(lower) ? 'openai' : 'gemini';
+        if (/\b(diagram|typography|ui|layout|design|font|graphic|overlay)\b/i.test(lower)) {
+            return 'openai';
+        }
+        if (/\b(fast|quick|rapid|iterate)\b.*\b(image|visual|render)\b/i.test(lower)) {
+            return 'gemini';
+        }
+        if (/\b(generate|create|make|draw|render)\b.*\b(image|picture|scene|visual)\b/i.test(lower)) {
+            const style = this.styleState?.visualStyle || '';
+            if (/cinematic|film|photorealism|photo|realistic/i.test(style + ' ' + lower)) {
+                return 'gemini';
+            }
+            return 'openai';
         }
 
         return this.activeProvider || 'openai';
     }
 
+    /* ─── Provider Adapters ───────────────────────────────── */
     toOpenAIFormat(contextMessages, systemPrompt) {
         const messages = [];
-        const systemLines = [];
 
         if (systemPrompt) {
-            systemLines.push(systemPrompt);
+            messages.push({ role: 'system', content: systemPrompt });
         }
 
-        for (const message of contextMessages) {
-            if (message.role === 'system') {
-                if (message.text) {
-                    systemLines.push(message.text);
+        for (const m of contextMessages) {
+            if (m.role === 'system') {
+                const existing = messages.find(x => x.role === 'system');
+                if (existing) {
+                    existing.content += '\n' + m.text;
+                } else {
+                    messages.push({ role: 'system', content: m.text });
                 }
                 continue;
             }
 
             const content = [];
-            if (message.text) {
-                content.push({ type: 'text', text: message.text });
+            if (m.text) {
+                content.push({ type: 'text', text: m.text });
+            }
+            if (m.images && m.images.length > 0) {
+                for (const img of m.images) {
+                    content.push({
+                        type: 'image_url',
+                        image_url: { url: img }
+                    });
+                }
             }
 
-            for (const image of ensureArray(message.images)) {
-                content.push({
-                    type: 'image_url',
-                    image_url: { url: image }
-                });
-            }
-
-            if (content.length === 0) {
+            if (content.length === 0 && m.text) {
                 content.push({ type: 'text', text: '' });
             }
 
             messages.push({
-                role: message.role === 'assistant' ? 'assistant' : 'user',
-                content
+                role: m.role === 'assistant' ? 'assistant' : 'user',
+                content: content.length === 1 && content[0].type === 'text' ? content[0].text : content
             });
         }
 
-        if (systemLines.length) {
-            messages.unshift({
-                role: 'system',
-                content: systemLines.join('\n')
-            });
-        }
-
-        return messages.map((message) => {
-            if (typeof message.content === 'string') {
-                return message;
-            }
-
-            if (message.content.length === 1 && message.content[0].type === 'text') {
-                return { role: message.role, content: message.content[0].text };
-            }
-
-            return message;
-        });
+        return messages;
     }
 
     toGeminiFormat(contextMessages, systemPrompt) {
         const contents = [];
-        const systemInstructionParts = [];
+        let systemParts = [];
 
         if (systemPrompt) {
-            systemInstructionParts.push({ text: systemPrompt });
+            systemParts.push({ text: systemPrompt });
         }
 
-        for (const message of contextMessages) {
-            if (message.role === 'system') {
-                if (message.text) {
-                    systemInstructionParts.push({ text: message.text });
-                }
+        for (const m of contextMessages) {
+            if (m.role === 'system') {
+                systemParts.push({ text: m.text });
                 continue;
             }
 
             const parts = [];
-            if (message.text) {
-                parts.push({ text: message.text });
+
+            if (m.role === 'user' && systemParts.length > 0) {
+                parts.push(...systemParts);
+                systemParts = [];
             }
 
-            for (const image of ensureArray(message.images)) {
-                const imagePart = this.toGeminiImagePart(image);
-                if (imagePart) {
-                    parts.push(imagePart);
+            if (m.text) {
+                parts.push({ text: m.text });
+            }
+
+            if (m.images && m.images.length > 0) {
+                for (const img of m.images) {
+                    const b64 = this.extractBase64(img);
+                    if (b64) {
+                        parts.push({
+                            inline_data: {
+                                mime_type: 'image/png',
+                                data: b64
+                            }
+                        });
+                    }
                 }
             }
 
-            if (parts.length) {
+            if (parts.length > 0) {
                 contents.push({
-                    role: message.role === 'assistant' ? 'model' : 'user',
+                    role: m.role === 'assistant' ? 'model' : 'user',
                     parts
                 });
             }
         }
 
-        const body = { contents };
-        if (systemInstructionParts.length) {
-            body.system_instruction = { parts: systemInstructionParts };
-        }
-        return body;
+        return { contents };
     }
 
-    toGeminiImagePart(imageUrl) {
-        if (!imageUrl || !imageUrl.startsWith('data:')) {
-            return null;
+    extractBase64(url) {
+        if (!url) return null;
+        if (url.startsWith('data:')) {
+            const match = url.match(/^data:image\/\w+;base64,(.+)$/);
+            return match ? match[1] : null;
         }
-
-        const match = imageUrl.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
-        if (!match) {
-            return null;
-        }
-
-        return {
-            inline_data: {
-                mime_type: match[1],
-                data: match[2]
-            }
-        };
+        return null;
     }
 
-    resolveProviderConfig(provider) {
-        const config = PROVIDER_CONFIGS[provider];
-        if (!config) {
-            throw new Error(`Unknown provider: ${provider}`);
-        }
-        return config;
-    }
+    /* ─── Chat Execution ──────────────────────────────────── */
+    async chat(userText, userImages, config) {
+        const {
+            provider,
+            chatModel,
+            baseUrl,
+            apiKey,
+            systemPrompt,
+            metadata
+        } = config;
 
-    buildChatRequest(provider, config, contextMessages, systemPrompt) {
-        const cfg = this.resolveProviderConfig(provider);
-        const baseUrl = trimTrailingSlash(config.baseUrl || cfg.chatBaseUrl);
+        const cfg = PROVIDER_CONFIGS[provider];
+        if (!cfg) throw new Error(`Unknown provider: ${provider}`);
 
-        if (!baseUrl) {
-            throw new Error(`Missing base URL for ${cfg.label}`);
-        }
-
-        if (provider === 'gemini') {
-            return {
-                url: `${baseUrl}/${cfg.chatEndpoint.replace('{model}', config.chatModel)}?key=${encodeURIComponent(config.apiKey)}`,
-                headers: { 'Content-Type': 'application/json' },
-                body: this.toGeminiFormat(contextMessages, systemPrompt)
-            };
-        }
-
-        return {
-            url: `${baseUrl}/${cfg.chatEndpoint}`,
-            headers: {
-                'Content-Type': 'application/json',
-                ...(cfg.authHeaders ? cfg.authHeaders(config.apiKey) : {})
-            },
-            body: {
-                model: config.chatModel,
-                messages: this.toOpenAIFormat(contextMessages, systemPrompt)
-            }
-        };
-    }
-
-    async chat(userText, userImages = [], config) {
-        const provider = config.provider;
-        const cfg = this.resolveProviderConfig(provider);
-
-        this.addMessage('user', userText, userImages, {
-            ...(config.metadata || {}),
-            provider
-        });
-        this.activeProvider = provider;
+        this.addMessage('user', userText, userImages, { provider, ...metadata });
+        if (provider && !this.activeProvider) this.activeProvider = provider;
 
         const contextMessages = this.getRelevantContext();
-        const request = this.buildChatRequest(provider, config, contextMessages, config.systemPrompt);
+        let url, headers, body;
 
-        const response = await fetch(request.url, {
-            method: 'POST',
-            headers: request.headers,
-            body: JSON.stringify(request.body)
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(
-                errorData?.error?.message ||
-                errorData?.error?.code ||
-                errorData?.message ||
-                `${response.status}`
-            );
+        if (provider === 'gemini') {
+            const geminiBody = this.toGeminiFormat(contextMessages, systemPrompt);
+            url = `${baseUrl || cfg.chatBaseUrl}/${cfg.chatEndpoint.replace('{model}', chatModel)}?key=${apiKey}`;
+            headers = { 'Content-Type': 'application/json' };
+            body = geminiBody;
+        } else {
+            const openaiMessages = this.toOpenAIFormat(contextMessages, systemPrompt);
+            url = `${baseUrl || cfg.chatBaseUrl}/${cfg.chatEndpoint}`;
+            headers = { 'Content-Type': 'application/json', ...cfg.authHeader(apiKey) };
+            body = { model: chatModel, messages: openaiMessages };
         }
 
-        const data = await response.json();
+        const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+        if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            throw new Error(errData.error?.message || errData.error?.code || `${resp.status}`);
+        }
+
+        const data = await resp.json();
         const reply = cfg.parseChatReply(data) || '';
 
         this.addMessage('assistant', reply, [], { provider });
-
-        const nextStyleState = this.extractStyleState(reply, userText);
-        if (nextStyleState) {
-            this.styleState = nextStyleState;
-        }
+        this.styleState = this.extractStyleState(reply, userText);
         this.save();
 
         return reply;
     }
 
     extractStyleState(assistantReply, userQuery) {
-        const combined = `${assistantReply || ''} ${userQuery || ''}`.toLowerCase();
+        const combined = (assistantReply + ' ' + userQuery).toLowerCase();
         const style = {};
-        const styleHints = [
-            ['visualStyle', /(?:visual style|look|style)[:\s-]+([^.\n]+)/i],
-            ['lighting', /lighting[:\s-]+([^.\n]+)/i],
-            ['camera', /camera[:\s-]+([^.\n]+)/i],
-            ['colorPalette', /(?:palette|color palette|colors)[:\s-]+([^.\n]+)/i]
-        ];
 
-        for (const [key, regex] of styleHints) {
-            const match = combined.match(regex);
-            if (match?.[1]) {
-                style[key] = match[1].trim();
-            }
-        }
+        const visualRe = /visual\s*style[:\s]*["']?([^"'.]+)/i;
+        const lightRe = /lighting[:\s]*["']?([^"'.]+)/i;
+        const cameraRe = /camera[:\s]*["']?([^"'.]+)/i;
+        const colorRe = /color\s*palette[:\s]*["']?([^"'.]+)/i;
 
-        return Object.keys(style).length ? { ...(this.styleState || {}), ...style } : this.styleState;
+        const vm = combined.match(visualRe);
+        const lm = combined.match(lightRe);
+        const cm = combined.match(cameraRe);
+        const pm = combined.match(colorRe);
+
+        if (vm) style.visualStyle = vm[1].trim();
+        if (lm) style.lighting = lm[1].trim();
+        if (cm) style.camera = cm[1].trim();
+        if (pm) style.colorPalette = pm[1].trim();
+
+        return Object.keys(style).length > 0 ? style : this.styleState;
     }
 
+    /* ─── Image Generation ────────────────────────────────── */
     async generateImage(prompt, config) {
-        const provider = config.provider;
-        const cfg = this.resolveProviderConfig(provider);
-        const baseUrl = trimTrailingSlash(config.baseUrl || cfg.imageBaseUrl || cfg.chatBaseUrl);
-        const referenceImages = ensureArray(config.referenceImages);
-        const hasReferenceImage = referenceImages.length > 0;
+        const {
+            provider,
+            imgModel,
+            baseUrl,
+            apiKey
+        } = config;
 
-        if (!baseUrl) {
-            throw new Error(`Missing base URL for ${cfg.label}`);
-        }
+        const cfg = PROVIDER_CONFIGS[provider];
+        if (!cfg) throw new Error(`Unknown provider: ${provider}`);
 
-        let request;
+        let url, headers, body;
 
         if (provider === 'gemini') {
-            request = this.buildGeminiImageRequest(baseUrl, config.imgModel, config.apiKey, prompt, referenceImages);
+            url = `${baseUrl || cfg.chatBaseUrl}/${cfg.imgEndpoint}?key=${apiKey}`;
+            headers = { 'Content-Type': 'application/json' };
+            body = { instances: [{ prompt }], parameters: { sampleCount: 1 } };
         } else {
-            request = this.buildOpenAIImageRequest(baseUrl, cfg, config.imgModel, config.apiKey, prompt, referenceImages);
+            url = `${baseUrl || cfg.chatBaseUrl}/${cfg.imgEndpoint}`;
+            headers = { 'Content-Type': 'application/json', ...cfg.authHeader(apiKey) };
+            body = { model: imgModel, prompt, n: 1, size: '1024x1024', quality: 'standard' };
         }
 
-        const response = await fetch(request.url, {
-            method: 'POST',
-            headers: request.headers,
-            body: JSON.stringify(request.body)
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(
-                errorData?.error?.message ||
-                errorData?.error?.code ||
-                errorData?.message ||
-                `${response.status}`
-            );
+        const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+        if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            throw new Error(errData.error?.message || errData.error?.code || `${resp.status}`);
         }
 
-        const data = await response.json();
-        const imageUrl = provider === 'gemini' ? parseGeminiImage(data) : this.parseOpenAIImageReply(data);
-
+        const data = await resp.json();
+        const imageUrl = cfg.parseImageReply(data);
         if (imageUrl) {
             this.addGeneratedImage(imageUrl);
-            this.addMessage(
-                'assistant',
-                hasReferenceImage ? `[Edited image with ${cfg.label}]` : `[Generated image with ${cfg.label}]`,
-                [imageUrl],
-                { provider, type: hasReferenceImage ? 'edited_image' : 'generated_image' }
-            );
+            this.addMessage('assistant', `[Generated image with ${cfg.label}]`, [imageUrl], { provider, type: 'generated_image' });
         }
 
         return imageUrl;
-    }
-
-    buildOpenAIImageRequest(baseUrl, cfg, model, apiKey, prompt, referenceImages) {
-        const headers = {
-            'Content-Type': 'application/json',
-            ...(cfg.authHeaders ? cfg.authHeaders(apiKey) : {})
-        };
-
-        if (referenceImages.length > 0) {
-            return {
-                url: `${baseUrl}/${cfg.imageEditEndpoint}`,
-                headers,
-                body: {
-                    model,
-                    prompt,
-                    size: '1024x1024',
-                    images: referenceImages.map((imageUrl) => ({ image_url: imageUrl }))
-                }
-            };
-        }
-
-        return {
-            url: `${baseUrl}/${cfg.imageGenerateEndpoint}`,
-            headers,
-            body: {
-                model,
-                prompt,
-                size: '1024x1024'
-            }
-        };
-    }
-
-    buildGeminiImageRequest(baseUrl, model, apiKey, prompt, referenceImages) {
-        const parts = [{ text: prompt }];
-        for (const imageUrl of referenceImages) {
-            const imagePart = this.toGeminiImagePart(imageUrl);
-            if (imagePart) {
-                parts.push(imagePart);
-            }
-        }
-
-        return {
-            url: `${baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-            headers: { 'Content-Type': 'application/json' },
-            body: {
-                contents: [{ role: 'user', parts }],
-                generationConfig: {
-                    responseModalities: ['TEXT', 'IMAGE']
-                }
-            }
-        };
-    }
-
-    parseOpenAIImageReply(data) {
-        const item = ensureArray(data?.data)[0];
-        if (!item) {
-            return null;
-        }
-
-        if (item.url) {
-            return item.url;
-        }
-
-        if (item.b64_json) {
-            return `data:image/png;base64,${item.b64_json}`;
-        }
-
-        return null;
     }
 }
 
