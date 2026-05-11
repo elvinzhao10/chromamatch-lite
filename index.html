@@ -22,7 +22,91 @@
         </header>
 
         <main>
-            <section class="upload-section" id="uploadSection">
+            <section class="session-hub" id="sessionHub">
+                <div class="session-hub-header">
+                    <div>
+                        <h2>Sessions</h2>
+                        <p>Each session keeps its own source, reference set, active look, layout, and adjustment memory.</p>
+                    </div>
+                    <div class="session-hub-actions">
+                        <button type="button" class="header-btn" id="newSessionBtn">New Session</button>
+                        <button type="button" class="header-btn" id="duplicateSessionBtn">Duplicate</button>
+                        <button type="button" class="header-btn danger" id="deleteSessionBtn">Delete</button>
+                    </div>
+                </div>
+                <div class="session-current-card" id="sessionCurrentCard">
+                    <div class="session-current-meta">
+                        <span class="session-current-label">Current Session</span>
+                        <strong id="currentSessionName">Untitled Session</strong>
+                        <span id="currentSessionStats">No source, no references</span>
+                    </div>
+                    <div class="session-current-actions">
+                        <button type="button" class="header-btn" id="openSessionBtn">Open Session</button>
+                        <button type="button" class="header-btn" id="renameSessionBtn">Rename</button>
+                    </div>
+                </div>
+                <div class="session-grid" id="sessionGrid"></div>
+                <div class="quick-start-card" id="quickStartCard">
+                    <div>
+                        <h3>Quick Start</h3>
+                        <p>Create a new session from dropped or uploaded images and start building references, looks, and LUTs immediately.</p>
+                    </div>
+                    <div class="quick-start-actions">
+                        <button type="button" class="header-btn" id="quickStartSourceBtn">Add Source To New Session</button>
+                        <button type="button" class="header-btn" id="quickStartReferenceBtn">Add Reference To New Session</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="workspace-shell" id="workspaceShell" style="display:none;">
+                <div class="workspace-topbar">
+                    <div class="workspace-topbar-left">
+                        <button type="button" class="header-btn" id="backToSessionsBtn">Sessions</button>
+                        <div class="workspace-session-meta">
+                            <strong id="workspaceSessionName">Session</strong>
+                            <span id="workspaceSessionSubtitle">Manage sources, references, looks, and exports.</span>
+                        </div>
+                    </div>
+                    <div class="workspace-topbar-actions">
+                        <button type="button" class="header-btn" id="addSourceToSessionBtn">Add Source</button>
+                        <button type="button" class="header-btn" id="addReferenceToSessionTopBtn">Add Reference</button>
+                        <button type="button" class="header-btn" id="newLookBtn">Save Look</button>
+                    </div>
+                </div>
+
+                <section class="asset-rails">
+                    <div class="asset-rail">
+                        <div class="asset-rail-header">
+                            <h3>Sources</h3>
+                            <button type="button" class="mini-btn" id="addSourceRailBtn">Add</button>
+                        </div>
+                        <div class="asset-thumb-list" id="sourceThumbList"></div>
+                    </div>
+                    <div class="asset-rail">
+                        <div class="asset-rail-header">
+                            <h3>References</h3>
+                            <button type="button" class="mini-btn" id="addReferenceRailBtn">Add</button>
+                        </div>
+                        <div class="asset-thumb-list" id="referenceRailList"></div>
+                    </div>
+                    <div class="asset-rail look-rail">
+                        <div class="asset-rail-header">
+                            <h3>Looks & LUTs</h3>
+                            <button type="button" class="mini-btn" id="clearCompareBoardBtn">Clear Compare</button>
+                        </div>
+                        <div class="asset-thumb-list look-thumb-list" id="lookThumbList"></div>
+                    </div>
+                </section>
+
+                <section class="look-compare-board" id="lookCompareBoard">
+                    <div class="asset-rail-header">
+                        <h3>Look Compare Board</h3>
+                        <span id="compareBoardSummary">Pin up to 4 looks for side-by-side review.</span>
+                    </div>
+                    <div class="look-compare-grid" id="lookCompareGrid"></div>
+                </section>
+
+                <section class="upload-section" id="uploadSection">
                 <div class="upload-container">
                     <div class="upload-box" id="sourceUpload">
                         <div class="upload-content">
@@ -54,6 +138,13 @@
                             <img id="targetImg" alt="Reference image">
                             <button class="remove-btn" onclick="event.stopPropagation(); removeImage('target')">&times;</button>
                         </div>
+                        <div class="reference-tray" id="referenceTray" style="display:none;">
+                            <div class="reference-tray-header">
+                                <span>Session References</span>
+                                <button type="button" class="mini-btn" id="addReferenceBtn">Add Another</button>
+                            </div>
+                            <div class="reference-thumb-list" id="referenceThumbList"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -64,9 +155,9 @@
                     </button>
                     <div class="status-message" id="statusMessage"></div>
                 </div>
-            </section>
+                </section>
 
-            <section class="results-section" id="resultsSection" style="display: none;">
+                <section class="results-section" id="resultsSection" style="display: none;">
                 <div class="results-header-row">
                     <h2>Results</h2>
                     <button type="button" class="change-images-btn" id="changeImagesBtn">Change Source / Reference</button>
@@ -310,6 +401,7 @@
                         </div>
                     </section>
                 </div>
+                </section>
             </section>
         </main>
 

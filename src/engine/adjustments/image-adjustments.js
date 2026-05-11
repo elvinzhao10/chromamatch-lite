@@ -83,7 +83,21 @@ class ImageAdjustments {
             const b = points[i + 1];
             if (x >= a.x && x <= b.x) {
                 const t = (x - a.x) / Math.max(b.x - a.x, 1e-6);
-                return a.y + (b.y - a.y) * t;
+                const p0 = points[Math.max(0, i - 1)];
+                const p1 = a;
+                const p2 = b;
+                const p3 = points[Math.min(points.length - 1, i + 2)];
+                const t2 = t * t;
+                const t3 = t2 * t;
+                const value = 0.5 * (
+                    (2 * p1.y) +
+                    (-p0.y + p2.y) * t +
+                    (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+                    (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
+                );
+                const minY = Math.min(p1.y, p2.y) - 0.18;
+                const maxY = Math.max(p1.y, p2.y) + 0.18;
+                return Math.max(0, Math.min(1, Math.min(maxY, Math.max(minY, value))));
             }
         }
         return x;

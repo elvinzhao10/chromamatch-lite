@@ -28,8 +28,10 @@ let adjustmentPreviewBaseImageData = null;
 let shouldAutoScrollToResults = true;
 let currentReferenceDataUrl = null;
 const REFERENCE_MEMORY_KEY = 'chromamatch_reference_memory';
+const SESSION_LIBRARY_KEY = 'chromamatch_sessions_v1';
 const displayScratchCanvas = document.createElement('canvas');
 const analysisScratchCanvas = document.createElement('canvas');
+let sessionLibrary = { activeSessionId: null, sessions: [] };
 
 // Search state
 let searchService = new SearchService();
@@ -37,11 +39,20 @@ let searchService = new SearchService();
 // DOM elements
 const sourceInput = document.getElementById('sourceInput');
 const targetInput = document.getElementById('targetInput');
+const sessionHub = document.getElementById('sessionHub');
 const uploadSection = document.getElementById('uploadSection');
 const sourcePreview = document.getElementById('sourcePreview');
 const targetPreview = document.getElementById('targetPreview');
 const sourceImg = document.getElementById('sourceImg');
 const targetImg = document.getElementById('targetImg');
+const referenceTray = document.getElementById('referenceTray');
+const referenceThumbList = document.getElementById('referenceThumbList');
+const addReferenceBtn = document.getElementById('addReferenceBtn');
+const sourceThumbList = document.getElementById('sourceThumbList');
+const referenceRailList = document.getElementById('referenceRailList');
+const lookThumbList = document.getElementById('lookThumbList');
+const lookCompareGrid = document.getElementById('lookCompareGrid');
+const compareBoardSummary = document.getElementById('compareBoardSummary');
 const processBtn = document.getElementById('processBtn');
 const statusMessage = document.getElementById('statusMessage');
 const resultsSection = document.getElementById('resultsSection');
@@ -94,7 +105,26 @@ const dashboardWorkspace = document.getElementById('dashboardWorkspace');
 // Advanced mode toggles
 const advancedOptionsPanel = document.getElementById('advancedOptionsPanel');
 const presetPanelBtn = document.getElementById('presetPanelBtn');
-const DASHBOARD_LAYOUT_KEY = 'chromamatch_dashboard_layout_v1';
+const sessionGrid = document.getElementById('sessionGrid');
+const currentSessionNameEl = document.getElementById('currentSessionName');
+const currentSessionStatsEl = document.getElementById('currentSessionStats');
+const newSessionBtn = document.getElementById('newSessionBtn');
+const duplicateSessionBtn = document.getElementById('duplicateSessionBtn');
+const deleteSessionBtn = document.getElementById('deleteSessionBtn');
+const renameSessionBtn = document.getElementById('renameSessionBtn');
+const openSessionBtn = document.getElementById('openSessionBtn');
+const workspaceShell = document.getElementById('workspaceShell');
+const workspaceSessionName = document.getElementById('workspaceSessionName');
+const workspaceSessionSubtitle = document.getElementById('workspaceSessionSubtitle');
+const backToSessionsBtn = document.getElementById('backToSessionsBtn');
+const addSourceToSessionBtn = document.getElementById('addSourceToSessionBtn');
+const addReferenceToSessionTopBtn = document.getElementById('addReferenceToSessionTopBtn');
+const addSourceRailBtn = document.getElementById('addSourceRailBtn');
+const addReferenceRailBtn = document.getElementById('addReferenceRailBtn');
+const quickStartSourceBtn = document.getElementById('quickStartSourceBtn');
+const quickStartReferenceBtn = document.getElementById('quickStartReferenceBtn');
+const newLookBtn = document.getElementById('newLookBtn');
+const clearCompareBoardBtn = document.getElementById('clearCompareBoardBtn');
 const DASHBOARD_MARGIN = 16;
 const DASHBOARD_GRID = 12;
 const DASHBOARD_SNAP_DISTANCE = 22;
@@ -104,7 +134,15 @@ const wheelDefaults = {
     midtone: '#ffffff',
     highlight: '#ffb347'
 };
-const PANEL_SLOT_KEY = 'chromamatch_panel_slots_v1';
+let snapTargetLayer = null;
+let verticalDivider = null;
+let horizontalDivider = null;
+let currentWorkspacePreset = 'edit';
+let workspaceMode = 'home';
+const workspaceSplitState = {
+    rightRatio: 0.32,
+    bottomRatio: 0.30
+};
 
 function applyTheme(theme) {
     document.body.setAttribute('data-theme', theme);
@@ -125,6 +163,518 @@ function toggleTheme() {
     const next = current === 'dark' ? 'light' : 'dark';
     localStorage.setItem('chromamatch-theme', next);
     applyTheme(next);
+}
+
+function createSessionTemplate(name = '') {
+    return {
+        id: `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: name || `Session ${new Date().toLocaleDateString()}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sources: [],
+        references: [],
+        activeSourceIds: [],
+        activeReferenceIds: [],
+        activeLookIds: [],
+        focusedLookId: null,
+        looks: [],
+        styleState: null,
+        layout: {
+            preset: 'edit',
+            floating: {},
+            dividerRatios: { right: 0.32, bottom: 0.30 },
+            panelRects: {},
+            panelSlots: {}
+        }
+    };
+}
+
+function loadSessionLibrary() {
+    try {
+        const raw = localStorage.getItem(SESSION_LIBRARY_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed.sessions)) {
+                sessionLibrary = parsed;
+            }
+        }
+    } catch {}
+
+    if (!Array.isArray(sessionLibrary.sessions) || sessionLibrary.sessions.length === 0) {
+        const starter = createSessionTemplate('First Session');
+        sessionLibrary = {
+            activeSessionId: starter.id,
+            sessions: [starter]
+        };
+        saveSessionLibrary();
+    } else if (!sessionLibrary.activeSessionId || !sessionLibrary.sessions.some((session) => session.id === sessionLibrary.activeSessionId)) {
+        sessionLibrary.activeSessionId = sessionLibrary.sessions[0].id;
+    }
+    sessionLibrary.sessions = sessionLibrary.sessions.map(normalizeSessionRecord);
+}
+
+function normalizeSessionRecord(session) {
+    const normalized = { ...createSessionTemplate(session.name), ...session };
+    if (session.source && (!Array.isArray(session.sources) || !session.sources.length)) {
+        normalized.sources = [{
+            id: session.source.id || `source_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            dataUrl: session.source.dataUrl,
+            name: session.source.name || 'Source'
+        }];
+    }
+    normalized.sources = Array.isArray(normalized.sources) ? normalized.sources : [];
+    normalized.references = Array.isArray(normalized.references) ? normalized.references : [];
+    normalized.looks = Array.isArray(normalized.looks) ? normalized.looks : [];
+    normalized.activeSourceIds = Array.isArray(normalized.activeSourceIds) ? normalized.activeSourceIds : [];
+    normalized.activeReferenceIds = Array.isArray(normalized.activeReferenceIds) ? normalized.activeReferenceIds : [];
+    normalized.activeLookIds = Array.isArray(normalized.activeLookIds) ? normalized.activeLookIds : [];
+    if (!normalized.activeSourceIds.length && normalized.sources[0]) normalized.activeSourceIds = [normalized.sources[0].id];
+    if (!normalized.activeReferenceIds.length && normalized.references[0]) normalized.activeReferenceIds = [normalized.references[0].id];
+    normalized.activeLookIds = normalized.activeLookIds.filter((id) => normalized.looks.some((look) => look.id === id)).slice(0, 4);
+    normalized.focusedLookId = normalized.focusedLookId || normalized.activeLookIds[0] || normalized.looks[0]?.id || null;
+    normalized.layout = {
+        preset: normalized.layout?.preset || 'edit',
+        floating: normalized.layout?.floating || {},
+        dividerRatios: {
+            right: normalized.layout?.dividerRatios?.right ?? 0.32,
+            bottom: normalized.layout?.dividerRatios?.bottom ?? 0.30
+        },
+        panelRects: normalized.layout?.panelRects || {},
+        panelSlots: normalized.layout?.panelSlots || {}
+    };
+    return normalized;
+}
+
+function saveSessionLibrary() {
+    try {
+        localStorage.setItem(SESSION_LIBRARY_KEY, JSON.stringify(sessionLibrary));
+    } catch {}
+}
+
+function getActiveSession() {
+    return sessionLibrary.sessions.find((session) => session.id === sessionLibrary.activeSessionId) || null;
+}
+
+function touchActiveSession() {
+    const session = getActiveSession();
+    if (!session) return null;
+    session.updatedAt = new Date().toISOString();
+    saveSessionLibrary();
+    return session;
+}
+
+function getActiveReferenceRecord() {
+    const session = getActiveSession();
+    if (!session) return null;
+    return session.references.find((reference) => reference.id === session.activeReferenceIds[0]) || session.references[0] || null;
+}
+
+function getActiveSourceRecord() {
+    const session = getActiveSession();
+    if (!session) return null;
+    return session.sources.find((source) => source.id === session.activeSourceIds[0]) || session.sources[0] || null;
+}
+
+function getSessionPresets(sessionId = sessionLibrary.activeSessionId) {
+    const session = sessionLibrary.sessions.find((item) => item.id === sessionId);
+    return Array.isArray(session?.looks) ? session.looks : [];
+}
+
+function getSessionLayoutState() {
+    const session = getActiveSession();
+    if (!session) return null;
+    session.layout = session.layout || {};
+    session.layout.preset = session.layout.preset || 'edit';
+    session.layout.floating = session.layout.floating || {};
+    session.layout.dividerRatios = session.layout.dividerRatios || { right: 0.32, bottom: 0.30 };
+    session.layout.panelRects = session.layout.panelRects || {};
+    session.layout.panelSlots = session.layout.panelSlots || {};
+    return session.layout;
+}
+
+function syncWorkspaceLayoutState() {
+    const layout = getSessionLayoutState();
+    if (!layout) return;
+    currentWorkspacePreset = layout.preset || 'edit';
+    workspaceSplitState.rightRatio = layout.dividerRatios?.right ?? 0.32;
+    workspaceSplitState.bottomRatio = layout.dividerRatios?.bottom ?? 0.30;
+}
+
+function getFocusedLook() {
+    const session = getActiveSession();
+    if (!session?.focusedLookId) return null;
+    return session.looks.find((look) => look.id === session.focusedLookId) || null;
+}
+
+function saveSessionLook(look) {
+    const session = touchActiveSession();
+    if (!session) return null;
+    const looks = Array.isArray(session.looks) ? session.looks : [];
+    const id = look.id || `look_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const nextLook = {
+        ...look,
+        id,
+        sessionId: session.id,
+        updatedAt: new Date().toISOString(),
+        createdAt: look.createdAt || new Date().toISOString()
+    };
+    const existingIndex = looks.findIndex((item) => item.id === id);
+    if (existingIndex >= 0) looks[existingIndex] = nextLook;
+    else looks.unshift(nextLook);
+    session.looks = looks.slice(0, 24);
+    session.focusedLookId = id;
+    session.activeLookIds = [id, ...(session.activeLookIds || []).filter((activeId) => activeId !== id)].slice(0, 4);
+    saveSessionLibrary();
+    return nextLook;
+}
+
+function deleteSessionLook(lookId) {
+    const session = touchActiveSession();
+    if (!session || !Array.isArray(session.looks)) return false;
+    session.looks = session.looks.filter((look) => look.id !== lookId);
+    session.activeLookIds = (session.activeLookIds || []).filter((id) => id !== lookId);
+    if (session.focusedLookId === lookId) {
+        session.focusedLookId = session.looks[0]?.id || null;
+    }
+    saveSessionLibrary();
+    return true;
+}
+
+function switchSession(sessionId) {
+    if (!sessionLibrary.sessions.some((session) => session.id === sessionId)) return;
+    sessionLibrary.activeSessionId = sessionId;
+    saveSessionLibrary();
+    syncWorkspaceLayoutState();
+    hydrateActiveSession();
+    renderSessionHub();
+    if (workspaceMode === 'session') initializeDashboardWindows();
+}
+
+function duplicateActiveSession() {
+    const active = getActiveSession();
+    if (!active) return;
+    const copy = JSON.parse(JSON.stringify(active));
+    copy.id = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    copy.name = `${active.name} Copy`;
+    copy.createdAt = new Date().toISOString();
+    copy.updatedAt = new Date().toISOString();
+    copy.looks = (copy.looks || []).map((look, index) => ({
+        ...look,
+        id: `look_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 6)}`,
+        sessionId: copy.id
+    }));
+    sessionLibrary.sessions.unshift(copy);
+    sessionLibrary.activeSessionId = copy.id;
+    saveSessionLibrary();
+    syncWorkspaceLayoutState();
+    hydrateActiveSession();
+    renderSessionHub();
+}
+
+function createNewSession() {
+    const session = createSessionTemplate();
+    sessionLibrary.sessions.unshift(session);
+    sessionLibrary.activeSessionId = session.id;
+    saveSessionLibrary();
+    syncWorkspaceLayoutState();
+    hydrateActiveSession();
+    renderSessionHub();
+}
+
+function deleteActiveSession() {
+    if (sessionLibrary.sessions.length <= 1) {
+        showError('Keep at least one session.');
+        return;
+    }
+    const activeId = sessionLibrary.activeSessionId;
+    sessionLibrary.sessions = sessionLibrary.sessions.filter((session) => session.id !== activeId);
+    sessionLibrary.activeSessionId = sessionLibrary.sessions[0]?.id || null;
+    saveSessionLibrary();
+    syncWorkspaceLayoutState();
+    hydrateActiveSession();
+    renderSessionHub();
+}
+
+function renameActiveSession() {
+    const session = getActiveSession();
+    if (!session) return;
+    const nextName = window.prompt('Rename session', session.name);
+    if (!nextName || !nextName.trim()) return;
+    session.name = nextName.trim();
+    touchActiveSession();
+    renderSessionHub();
+}
+
+function renderSessionHub() {
+    const active = getActiveSession();
+    if (!active) return;
+    if (currentSessionNameEl) currentSessionNameEl.textContent = active.name;
+    if (currentSessionStatsEl) {
+        const sourceLabel = `${active.sources.length} source${active.sources.length === 1 ? '' : 's'}`;
+        const referenceLabel = `${active.references.length} reference${active.references.length === 1 ? '' : 's'}`;
+        const lookLabel = `${(active.looks || []).length} looks`;
+        currentSessionStatsEl.textContent = `${sourceLabel}, ${referenceLabel}, ${lookLabel}`;
+    }
+    if (workspaceSessionName) workspaceSessionName.textContent = active.name;
+    if (workspaceSessionSubtitle) workspaceSessionSubtitle.textContent = `${active.sources.length} sources · ${active.references.length} references · ${(active.looks || []).length} looks`;
+    if (sessionGrid) {
+        sessionGrid.innerHTML = sessionLibrary.sessions.map((session) => `
+            <article class="session-card ${session.id === sessionLibrary.activeSessionId ? 'active' : ''}" data-session-id="${session.id}">
+                <div class="session-card-header">
+                    <div class="session-card-title">${session.name}</div>
+                    <span class="session-chip">${session.id === sessionLibrary.activeSessionId ? 'Current' : 'Library'}</span>
+                </div>
+                <div class="session-card-meta">${session.sources.length ? `${session.sources.length} sources` : 'No source yet'} · ${session.references.length} refs</div>
+                <div class="session-card-looks">${(session.looks || []).length} saved looks</div>
+                <div class="session-card-tags">
+                    ${(session.references || []).slice(0, 3).map((reference) => `<span class="session-chip">${reference.name || 'Reference'}</span>`).join('')}
+                </div>
+                <button type="button" class="mini-btn session-open-btn" data-open-session="${session.id}">Open</button>
+            </article>
+        `).join('');
+        sessionGrid.querySelectorAll('.session-card').forEach((card) => {
+            card.addEventListener('click', (event) => {
+                if (event.target.closest('[data-open-session]')) return;
+                switchSession(card.dataset.sessionId);
+            });
+        });
+        sessionGrid.querySelectorAll('[data-open-session]').forEach((button) => {
+            button.addEventListener('click', () => {
+                switchSession(button.dataset.openSession);
+                enterWorkspace();
+            });
+        });
+    }
+}
+
+function renderReferenceTray() {
+    const session = getActiveSession();
+    if (!referenceTray || !referenceThumbList || !session) return;
+    const references = session.references || [];
+    referenceTray.style.display = references.length ? 'block' : 'none';
+    referenceThumbList.innerHTML = references.map((reference, index) => `
+        <button type="button" class="reference-thumb ${reference.id === session.activeReferenceIds[0] ? 'active' : ''}" data-reference-id="${reference.id}">
+            <img src="${reference.dataUrl}" alt="${reference.name || `Reference ${index + 1}`}" />
+            <span>${reference.name || `Ref ${index + 1}`}</span>
+        </button>
+    `).join('');
+    referenceThumbList.querySelectorAll('.reference-thumb').forEach((button) => {
+        button.addEventListener('click', () => activateReference(button.dataset.referenceId));
+    });
+}
+
+function renderSourceTray() {
+    const session = getActiveSession();
+    if (!sourceThumbList || !session) return;
+    sourceThumbList.innerHTML = (session.sources || []).map((source, index) => `
+        <button type="button" class="reference-thumb ${source.id === session.activeSourceIds[0] ? 'active' : ''}" data-source-id="${source.id}">
+            <img src="${source.dataUrl}" alt="${source.name || `Source ${index + 1}`}" />
+            <span>${source.name || `Source ${index + 1}`}</span>
+        </button>
+    `).join('');
+    sourceThumbList.querySelectorAll('[data-source-id]').forEach((button) => {
+        button.addEventListener('click', () => activateSource(button.dataset.sourceId));
+    });
+}
+
+function renderReferenceRail() {
+    if (!referenceRailList) return;
+    referenceRailList.innerHTML = referenceThumbList?.innerHTML || '';
+    referenceRailList.querySelectorAll('.reference-thumb').forEach((button) => {
+        button.addEventListener('click', () => activateReference(button.dataset.referenceId));
+    });
+}
+
+function renderLookStrip() {
+    const session = getActiveSession();
+    if (!lookThumbList || !session) return;
+    lookThumbList.innerHTML = (session.looks || []).map((look, index) => `
+        <div class="reference-thumb look-thumb ${look.id === session.focusedLookId ? 'active' : ''}" data-look-id="${look.id}">
+            ${look.previewDataUrl ? `<img src="${look.previewDataUrl}" alt="${look.name || `Look ${index + 1}`}" />` : ''}
+            <span>${look.name || `Look ${index + 1}`}</span>
+            <small>${look.referenceIds?.length ? 'Ref-linked' : 'Manual'}${look.sourceId ? ' · Source linked' : ''}</small>
+            <div class="look-thumb-actions">
+                <button type="button" class="mini-btn" data-action="apply">Apply</button>
+                <button type="button" class="mini-btn" data-action="compare">${(session.activeLookIds || []).includes(look.id) ? 'Unpin' : 'Pin'}</button>
+                <button type="button" class="mini-btn" data-action="export">LUT</button>
+            </div>
+        </div>
+    `).join('');
+    lookThumbList.querySelectorAll('[data-look-id]').forEach((card) => {
+        card.addEventListener('click', (event) => {
+            const action = event.target.closest('[data-action]')?.dataset.action;
+            const lookId = card.dataset.lookId;
+            if (action === 'export') {
+                exportLookLut(lookId);
+                return;
+            }
+            if (action === 'compare') {
+                toggleLookCompare(lookId);
+                return;
+            }
+            loadPreset(lookId);
+        });
+    });
+    renderLookCompareBoard();
+}
+
+function exportLookLut(lookId) {
+    const session = getActiveSession();
+    const look = session?.looks?.find((item) => item.id === lookId);
+    if (!look) return;
+    loadPreset(lookId);
+    showLUTExportDialog();
+}
+
+function toggleLookCompare(lookId) {
+    const session = touchActiveSession();
+    if (!session) return;
+    const selected = [...(session.activeLookIds || [])];
+    const existingIndex = selected.indexOf(lookId);
+    if (existingIndex >= 0) {
+        selected.splice(existingIndex, 1);
+    } else {
+        selected.unshift(lookId);
+    }
+    session.activeLookIds = selected.slice(0, 4);
+    saveSessionLibrary();
+    renderLookStrip();
+}
+
+function renderLookCompareBoard() {
+    const session = getActiveSession();
+    if (!lookCompareGrid || !compareBoardSummary || !session) return;
+    const selectedLooks = (session.activeLookIds || []).map((id) => session.looks.find((look) => look.id === id)).filter(Boolean);
+    compareBoardSummary.textContent = selectedLooks.length
+        ? `${selectedLooks.length} look${selectedLooks.length === 1 ? '' : 's'} pinned for compare.`
+        : 'Pin up to 4 looks for side-by-side review.';
+    lookCompareGrid.innerHTML = selectedLooks.map((look) => {
+        const source = session.sources.find((item) => item.id === look.sourceId);
+        const reference = session.references.find((item) => item.id === look.referenceIds?.[0]);
+        return `
+        <article class="compare-look-card ${look.id === session.focusedLookId ? 'active' : ''}">
+            ${look.previewDataUrl ? `<img src="${look.previewDataUrl}" alt="${look.name}" />` : ''}
+            <div class="compare-look-meta">
+                <strong>${look.name}</strong>
+                <span>${source?.name || 'No source selected'} · ${reference?.name || 'No reference linked'}</span>
+            </div>
+            <div class="look-thumb-actions">
+                <button type="button" class="mini-btn" data-action="apply" data-look-id="${look.id}">Apply</button>
+                <button type="button" class="mini-btn" data-action="export" data-look-id="${look.id}">Export LUT</button>
+                <button type="button" class="mini-btn" data-action="remove" data-look-id="${look.id}">Remove</button>
+            </div>
+        </article>
+    `;
+    }).join('') || `<div class="compare-board-empty">Pin looks from the strip above to compare references, sources, and LUT candidates side by side.</div>`;
+    lookCompareGrid.querySelectorAll('[data-look-id]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const lookId = button.dataset.lookId;
+            if (button.dataset.action === 'export') exportLookLut(lookId);
+            else if (button.dataset.action === 'remove') toggleLookCompare(lookId);
+            else loadPreset(lookId);
+        });
+    });
+}
+
+function applySourceDataUrl(dataUrl) {
+    if (!dataUrl) {
+        sourceImage = null;
+        sourceImg.src = '';
+        sourcePreview.style.display = 'none';
+        document.getElementById('sourceUpload').classList.remove('has-image');
+        updateProcessButton();
+        return;
+    }
+    const img = new Image();
+    img.onload = () => {
+        sourceImage = img;
+        sourceImg.src = dataUrl;
+        sourcePreview.style.display = 'block';
+        document.getElementById('sourceUpload').classList.add('has-image');
+        updateProcessButton();
+    };
+    img.src = dataUrl;
+}
+
+function activateSource(sourceId) {
+    const session = touchActiveSession();
+    if (!session) return;
+    const source = session.sources.find((item) => item.id === sourceId);
+    if (!source) return;
+    session.activeSourceIds = [source.id];
+    saveSessionLibrary();
+    applySourceDataUrl(source.dataUrl);
+    renderSourceTray();
+    renderSessionHub();
+    if (targetImage && resultsSection.style.display !== 'none') processImages();
+}
+
+function activateReference(referenceId) {
+    const session = touchActiveSession();
+    if (!session) return;
+    const reference = session.references.find((item) => item.id === referenceId);
+    if (!reference) return;
+    session.activeReferenceIds = [reference.id];
+    currentReferenceDataUrl = reference.dataUrl;
+    targetImg.src = reference.dataUrl;
+    targetPreview.style.display = 'block';
+    document.getElementById('targetUpload').classList.add('has-image');
+    const img = new Image();
+    img.onload = () => {
+        targetImage = img;
+        updateProcessButton();
+        renderReferenceTray();
+        renderReferenceRail();
+        if (sourceImage && resultsSection.style.display !== 'none') processImages();
+    };
+    img.src = reference.dataUrl;
+}
+
+function hydrateActiveSession() {
+    const session = getActiveSession();
+    if (!session) return;
+    syncWorkspaceLayoutState();
+    const source = getActiveSourceRecord();
+    applySourceDataUrl(source?.dataUrl || null);
+    const reference = getActiveReferenceRecord();
+    if (reference) {
+        activateReference(reference.id);
+    } else {
+        targetImage = null;
+        currentReferenceDataUrl = null;
+        targetImg.src = '';
+        targetPreview.style.display = 'none';
+        document.getElementById('targetUpload').classList.remove('has-image');
+        updateProcessButton();
+        renderReferenceTray();
+        renderReferenceRail();
+    }
+    renderSourceTray();
+    renderLookStrip();
+    if (!source || !reference) {
+        hideResults();
+    }
+    renderSessionHub();
+}
+
+function enterWorkspace() {
+    workspaceMode = 'session';
+    if (workspaceShell) workspaceShell.style.display = 'block';
+    if (sessionHub) sessionHub.style.display = 'none';
+    syncWorkspaceLayoutState();
+    renderSessionHub();
+    renderSourceTray();
+    renderReferenceTray();
+    renderReferenceRail();
+    renderLookStrip();
+    initializeDashboardWindows();
+}
+
+function exitWorkspace() {
+    workspaceMode = 'home';
+    if (workspaceShell) workspaceShell.style.display = 'none';
+    if (sessionHub) sessionHub.style.display = 'grid';
+    closeAllModals();
 }
 
 // Event listeners
@@ -164,6 +714,41 @@ performanceMode.addEventListener('change', () => {
 if (presetPanelBtn) {
     presetPanelBtn.addEventListener('click', togglePresetPanel);
 }
+newSessionBtn?.addEventListener('click', createNewSession);
+duplicateSessionBtn?.addEventListener('click', duplicateActiveSession);
+deleteSessionBtn?.addEventListener('click', deleteActiveSession);
+renameSessionBtn?.addEventListener('click', renameActiveSession);
+addReferenceBtn?.addEventListener('click', openReferencePopup);
+openSessionBtn?.addEventListener('click', enterWorkspace);
+backToSessionsBtn?.addEventListener('click', exitWorkspace);
+addSourceToSessionBtn?.addEventListener('click', () => sourceInput?.click());
+addReferenceToSessionTopBtn?.addEventListener('click', openReferencePopup);
+addSourceRailBtn?.addEventListener('click', () => sourceInput?.click());
+addReferenceRailBtn?.addEventListener('click', openReferencePopup);
+quickStartSourceBtn?.addEventListener('click', () => {
+    createNewSession();
+    enterWorkspace();
+    sourceInput?.click();
+});
+quickStartReferenceBtn?.addEventListener('click', () => {
+    createNewSession();
+    enterWorkspace();
+    openReferencePopup();
+});
+newLookBtn?.addEventListener('click', () => {
+    if (document.getElementById('presetPanel')?.style.display === 'none') {
+        togglePresetPanel();
+    }
+    document.getElementById('presetNameInput')?.focus();
+});
+clearCompareBoardBtn?.addEventListener('click', () => {
+    const session = touchActiveSession();
+    if (!session) return;
+    session.activeLookIds = [];
+    saveSessionLibrary();
+    renderLookStrip();
+    showStatus('Compare selection cleared.', 'success');
+});
 
 function updateMethodHint(result = null) {
     const method = algorithmMethod.value;
@@ -283,7 +868,7 @@ function setActiveDashboardWindow(windowId, options = {}) {
 }
 
 function getDashboardLayouts() {
-    return readJsonStorage(DASHBOARD_LAYOUT_KEY, {});
+    return getSessionLayoutState()?.panelRects || {};
 }
 
 function getWorkspaceRect() {
@@ -342,7 +927,7 @@ function getPanelSlots(workspaceRect) {
 }
 
 function getPreferredSlot(panelId) {
-    const stored = readJsonStorage(PANEL_SLOT_KEY, {});
+    const stored = getSessionLayoutState()?.panelSlots || {};
     const defaults = {
         windowThreeUp: 'topLeft',
         windowAdjustments: 'right',
@@ -354,9 +939,11 @@ function getPreferredSlot(panelId) {
 }
 
 function savePreferredSlot(panelId, slotName) {
-    const stored = readJsonStorage(PANEL_SLOT_KEY, {});
+    const layout = getSessionLayoutState();
+    if (!layout) return;
+    const stored = layout.panelSlots || {};
     stored[panelId] = slotName;
-    writeJsonStorage(PANEL_SLOT_KEY, stored);
+    layout.panelSlots = stored;
 }
 
 function findClosestSlot(panel, workspaceRect, clientX, clientY) {
@@ -439,27 +1026,31 @@ function getSmartDefaultLayout(panelId, workspaceRect) {
 function getPresetLayout(layoutName, workspaceRect) {
     const w = workspaceRect.width;
     const h = workspaceRect.height;
+    const rightDock = Math.max(360, Math.min(520, Math.round(w * workspaceSplitState.rightRatio)));
+    const bottomDock = Math.max(220, Math.min(360, Math.round(h * workspaceSplitState.bottomRatio)));
+    const mainWidth = w - rightDock - DASHBOARD_MARGIN * 3;
+    const topHeight = h - bottomDock - DASHBOARD_MARGIN * 3;
     const defaults = {
         edit: {
-            windowThreeUp: { left: 16, top: 16, width: w - 500, height: h - 32 },
-            windowAdjustments: { left: w - 468, top: 16, width: 452, height: h - 32 },
-            windowAnalysis: { left: 16, top: h - 250, width: Math.max(640, w - 500), height: 234 },
+            windowThreeUp: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: mainWidth, height: topHeight },
+            windowAdjustments: { left: w - rightDock - DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: rightDock, height: topHeight },
+            windowAnalysis: { left: DASHBOARD_MARGIN, top: h - bottomDock - DASHBOARD_MARGIN, width: w - DASHBOARD_MARGIN * 2, height: bottomDock },
             windowOrigVsResult: { left: 64, top: 64, width: 620, height: 390 },
             windowRefVsResult: { left: 116, top: 112, width: 620, height: 390 }
         },
         compare: {
-            windowThreeUp: { left: 16, top: 16, width: Math.max(500, w * 0.46), height: Math.max(320, h * 0.52) },
-            windowOrigVsResult: { left: w * 0.48, top: 16, width: Math.max(360, w * 0.25), height: Math.max(320, h * 0.52) },
-            windowRefVsResult: { left: w * 0.74, top: 16, width: Math.max(320, w * 0.24 - 16), height: Math.max(320, h * 0.52) },
-            windowAnalysis: { left: 16, top: h - 270, width: w - 32, height: 254 },
-            windowAdjustments: { left: 16, top: h * 0.56, width: Math.max(420, w * 0.34), height: Math.max(210, h * 0.14) }
+            windowThreeUp: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: Math.max(440, mainWidth * 0.52), height: topHeight },
+            windowOrigVsResult: { left: DASHBOARD_MARGIN * 2 + Math.max(440, mainWidth * 0.52), top: DASHBOARD_MARGIN, width: Math.max(280, (mainWidth * 0.48) / 2 - DASHBOARD_MARGIN), height: topHeight },
+            windowRefVsResult: { left: DASHBOARD_MARGIN * 3 + Math.max(440, mainWidth * 0.52) + Math.max(280, (mainWidth * 0.48) / 2 - DASHBOARD_MARGIN), top: DASHBOARD_MARGIN, width: Math.max(280, (mainWidth * 0.48) / 2 - DASHBOARD_MARGIN), height: topHeight },
+            windowAnalysis: { left: DASHBOARD_MARGIN, top: h - bottomDock - DASHBOARD_MARGIN, width: w - DASHBOARD_MARGIN * 2, height: bottomDock },
+            windowAdjustments: { left: w - rightDock - DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: rightDock, height: topHeight }
         },
         analysis: {
-            windowThreeUp: { left: 16, top: 16, width: Math.max(460, w * 0.44), height: Math.max(320, h * 0.46) },
-            windowAdjustments: { left: w * 0.46, top: 16, width: Math.max(360, w * 0.22), height: Math.max(320, h * 0.46) },
-            windowOrigVsResult: { left: w * 0.70, top: 16, width: Math.max(300, w * 0.28 - 16), height: Math.max(220, h * 0.28) },
-            windowRefVsResult: { left: w * 0.70, top: h * 0.30, width: Math.max(300, w * 0.28 - 16), height: Math.max(220, h * 0.18) },
-            windowAnalysis: { left: 16, top: h * 0.50, width: w - 32, height: Math.max(300, h * 0.46) }
+            windowThreeUp: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: Math.max(420, mainWidth * 0.5), height: topHeight },
+            windowAdjustments: { left: DASHBOARD_MARGIN * 2 + Math.max(420, mainWidth * 0.5), top: DASHBOARD_MARGIN, width: Math.max(300, mainWidth * 0.22), height: topHeight },
+            windowOrigVsResult: { left: w - rightDock - DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: rightDock, height: Math.max(180, topHeight * 0.45) },
+            windowRefVsResult: { left: w - rightDock - DASHBOARD_MARGIN, top: DASHBOARD_MARGIN * 2 + Math.max(180, topHeight * 0.45), width: rightDock, height: Math.max(160, topHeight * 0.55 - DASHBOARD_MARGIN) },
+            windowAnalysis: { left: DASHBOARD_MARGIN, top: h - bottomDock - DASHBOARD_MARGIN, width: w - DASHBOARD_MARGIN * 2, height: bottomDock }
         }
     };
     return defaults[layoutName] || defaults.edit;
@@ -467,6 +1058,15 @@ function getPresetLayout(layoutName, workspaceRect) {
 
 function applyWorkspacePreset(layoutName) {
     if (!dashboardWorkspace || window.innerWidth <= 980) return;
+    currentWorkspacePreset = layoutName;
+    const layoutState = getSessionLayoutState();
+    if (layoutState) {
+        layoutState.preset = layoutName;
+        layoutState.dividerRatios = {
+            right: workspaceSplitState.rightRatio,
+            bottom: workspaceSplitState.bottomRatio
+        };
+    }
     const workspaceRect = getWorkspaceRect();
     const preset = getPresetLayout(layoutName, workspaceRect);
     document.querySelectorAll('.dashboard-window').forEach((panel, index) => {
@@ -489,6 +1089,7 @@ function applyWorkspacePreset(layoutName) {
     saveDashboardLayouts();
     updateComparisonViews();
     updateWindowDensityClasses();
+    updateWorkspaceDividers();
 }
 
 function showSnapPreview(rect) {
@@ -505,6 +1106,29 @@ function hideSnapPreview() {
     snapPreview.style.display = 'none';
 }
 
+function ensureSnapTargetLayer() {
+    if (!dashboardWorkspace || snapTargetLayer) return;
+    snapTargetLayer = document.createElement('div');
+    snapTargetLayer.className = 'workspace-snap-target-layer';
+    dashboardWorkspace.appendChild(snapTargetLayer);
+}
+
+function showSnapTargets(workspaceRect, activeSlotName) {
+    ensureSnapTargetLayer();
+    if (!snapTargetLayer) return;
+    const slots = getPanelSlots(workspaceRect);
+    snapTargetLayer.innerHTML = Object.entries(slots).map(([name, rect]) => `
+        <div class="workspace-snap-target ${name === activeSlotName ? 'active' : ''}" data-slot="${name}" style="left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;display:flex;">
+            ${name.replace(/([A-Z])/g, ' $1')}
+        </div>
+    `).join('');
+}
+
+function hideSnapTargets() {
+    if (!snapTargetLayer) return;
+    snapTargetLayer.innerHTML = '';
+}
+
 function updateWindowDensityClasses() {
     document.querySelectorAll('.dashboard-window').forEach((panel) => {
         const width = panel.offsetWidth || parseInt(panel.style.width || '0', 10);
@@ -513,8 +1137,41 @@ function updateWindowDensityClasses() {
     });
 }
 
+function ensureWorkspaceDividers() {
+    if (!dashboardWorkspace) return;
+    if (!verticalDivider) {
+        verticalDivider = document.createElement('div');
+        verticalDivider.className = 'workspace-divider vertical';
+        dashboardWorkspace.appendChild(verticalDivider);
+    }
+    if (!horizontalDivider) {
+        horizontalDivider = document.createElement('div');
+        horizontalDivider.className = 'workspace-divider horizontal';
+        dashboardWorkspace.appendChild(horizontalDivider);
+    }
+}
+
+function updateWorkspaceDividers() {
+    ensureWorkspaceDividers();
+    if (!verticalDivider || !horizontalDivider || window.innerWidth <= 980) return;
+    const analysisPanel = document.getElementById('windowAnalysis');
+    const adjustmentPanel = document.getElementById('windowAdjustments');
+    const analysisTop = parseInt(analysisPanel?.style.top || '0', 10);
+    const adjustmentLeft = parseInt(adjustmentPanel?.style.left || '0', 10);
+    verticalDivider.style.display = adjustmentPanel?.classList.contains('active') ? 'block' : 'none';
+    horizontalDivider.style.display = analysisPanel?.classList.contains('active') ? 'block' : 'none';
+    verticalDivider.style.left = `${adjustmentLeft - 4}px`;
+    verticalDivider.style.top = `${DASHBOARD_MARGIN}px`;
+    verticalDivider.style.height = `${Math.max(120, analysisTop - DASHBOARD_MARGIN - 8)}px`;
+    horizontalDivider.style.left = `${DASHBOARD_MARGIN}px`;
+    horizontalDivider.style.top = `${analysisTop - 4}px`;
+    horizontalDivider.style.width = `${Math.max(240, getWorkspaceRect().width - DASHBOARD_MARGIN * 2)}px`;
+}
+
 function saveDashboardLayouts() {
     if (!dashboardWorkspace || window.innerWidth <= 980) return;
+    const layoutState = getSessionLayoutState();
+    if (!layoutState) return;
     const layouts = {};
     document.querySelectorAll('.dashboard-window').forEach((panel) => {
         layouts[panel.id] = {
@@ -526,7 +1183,13 @@ function saveDashboardLayouts() {
             zIndex: panel.style.zIndex || '1'
         };
     });
-    writeJsonStorage(DASHBOARD_LAYOUT_KEY, layouts);
+    layoutState.panelRects = layouts;
+    layoutState.preset = currentWorkspacePreset;
+    layoutState.dividerRatios = {
+        right: workspaceSplitState.rightRatio,
+        bottom: workspaceSplitState.bottomRatio
+    };
+    touchActiveSession();
 }
 
 function bringWindowToFront(panel) {
@@ -536,7 +1199,15 @@ function bringWindowToFront(panel) {
 }
 
 function resetDashboardLayout() {
-    localStorage.removeItem(DASHBOARD_LAYOUT_KEY);
+    const layoutState = getSessionLayoutState();
+    if (layoutState) {
+        layoutState.panelRects = {};
+        layoutState.panelSlots = {};
+        layoutState.preset = 'edit';
+        layoutState.dividerRatios = { right: 0.32, bottom: 0.30 };
+        touchActiveSession();
+        syncWorkspaceLayoutState();
+    }
     initializeDashboardWindows(true);
 }
 
@@ -580,6 +1251,7 @@ function initializeDashboardWindows(forceReset = false) {
         btn.classList.toggle('active', !!targetPanel?.classList.contains('active'));
     });
     updateWindowDensityClasses();
+    updateWorkspaceDividers();
     saveDashboardLayouts();
 }
 
@@ -589,11 +1261,23 @@ function setupDashboardWindowInteractions() {
     initializeDashboardWindows();
     updateWindowDensityClasses();
     hideSnapPreview();
+    ensureWorkspaceDividers();
+    updateWorkspaceDividers();
     document.getElementById('resetWindowLayoutBtn')?.addEventListener('click', resetDashboardLayout);
 
     let dragState = null;
+    let dividerState = null;
     const startDrag = (event) => {
         if (window.innerWidth <= 980) return;
+        const divider = event.target.closest('.workspace-divider');
+        if (divider) {
+            dividerState = {
+                type: divider.classList.contains('vertical') ? 'vertical' : 'horizontal',
+                workspaceRect: dashboardWorkspace.getBoundingClientRect()
+            };
+            divider.classList.add('active');
+            return;
+        }
         const bar = event.target.closest('.dashboard-window-bar');
         if (!bar) return;
         const panel = bar.closest('.dashboard-window');
@@ -610,24 +1294,52 @@ function setupDashboardWindowInteractions() {
             slotRect: null
         };
         panel.classList.add('dragging');
+        showSnapTargets(workspaceRect, dragState.slotName);
     };
 
     const moveDrag = (event) => {
+        if (dividerState) {
+            const workspaceRect = dividerState.workspaceRect;
+            if (dividerState.type === 'vertical') {
+                const pointerX = event.clientX - workspaceRect.left;
+                workspaceSplitState.rightRatio = 1 - Math.max(0.22, Math.min(0.48, pointerX / workspaceRect.width));
+            } else {
+                const pointerY = event.clientY - workspaceRect.top;
+                workspaceSplitState.bottomRatio = 1 - Math.max(0.22, Math.min(0.5, pointerY / workspaceRect.height));
+            }
+            const layout = getSessionLayoutState();
+            if (layout) {
+                layout.dividerRatios = {
+                    right: workspaceSplitState.rightRatio,
+                    bottom: workspaceSplitState.bottomRatio
+                };
+            }
+            applyWorkspacePreset(currentWorkspacePreset);
+            return;
+        }
         if (!dragState) return;
         const { panel, workspaceRect } = dragState;
         const slot = findClosestSlot(panel, workspaceRect, event.clientX, event.clientY);
         dragState.slotName = slot.name;
         dragState.slotRect = slot.rect;
+        showSnapTargets(workspaceRect, slot.name);
         showSnapPreview(slot.rect);
-        applyRectToPanel(panel, slot.rect);
     };
 
     const stopDrag = () => {
+        if (dividerState) {
+            verticalDivider?.classList.remove('active');
+            horizontalDivider?.classList.remove('active');
+            dividerState = null;
+            saveDashboardLayouts();
+            return;
+        }
         if (!dragState) return;
         dragState.panel.classList.remove('dragging');
         if (dragState.slotName) savePreferredSlot(dragState.panel.id, dragState.slotName);
         if (dragState.slotRect) applyRectToPanel(dragState.panel, dragState.slotRect);
         hideSnapPreview();
+        hideSnapTargets();
         dragState = null;
         saveDashboardLayouts();
         updateWindowDensityClasses();
@@ -777,12 +1489,39 @@ function handleImageUpload(event, type) {
                 sourceImg.src = e.target.result;
                 sourcePreview.style.display = 'block';
                 document.getElementById('sourceUpload').classList.add('has-image');
+                const session = touchActiveSession();
+                if (session) {
+                    const sourceRecord = {
+                        id: `source_${Date.now()}`,
+                        dataUrl: e.target.result,
+                        name: file.name || 'Source'
+                    };
+                    session.sources = [sourceRecord, ...(session.sources || []).filter((source) => source.dataUrl !== sourceRecord.dataUrl)].slice(0, 12);
+                    session.activeSourceIds = [sourceRecord.id];
+                    saveSessionLibrary();
+                    renderSessionHub();
+                    renderSourceTray();
+                }
             } else {
                 targetImage = img;
                 currentReferenceDataUrl = e.target.result;
                 targetImg.src = e.target.result;
                 targetPreview.style.display = 'block';
                 document.getElementById('targetUpload').classList.add('has-image');
+                const session = touchActiveSession();
+                if (session) {
+                    const referenceRecord = {
+                        id: `ref_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                        dataUrl: e.target.result,
+                        name: file.name || `Reference ${session.references.length + 1}`
+                    };
+                    session.references = [referenceRecord, ...(session.references || []).filter((ref) => ref.dataUrl !== referenceRecord.dataUrl)].slice(0, 12);
+                    session.activeReferenceIds = [referenceRecord.id];
+                    saveSessionLibrary();
+                    renderReferenceTray();
+                    renderReferenceRail();
+                    renderSessionHub();
+                }
             }
 
             updateProcessButton();
@@ -804,12 +1543,36 @@ function removeImage(type) {
         sourceInput.value = '';
         sourcePreview.style.display = 'none';
         document.getElementById('sourceUpload').classList.remove('has-image');
+        const session = touchActiveSession();
+        if (session) {
+            session.sources = (session.sources || []).filter((source) => source.id !== session.activeSourceIds[0]);
+            session.activeSourceIds = session.sources[0]?.id ? [session.sources[0].id] : [];
+            saveSessionLibrary();
+            renderSourceTray();
+            renderSessionHub();
+            if (session.activeSourceIds[0]) {
+                activateSource(session.activeSourceIds[0]);
+            }
+        }
     } else {
-        targetImage = null;
-        currentReferenceDataUrl = null;
         targetInput.value = '';
-        targetPreview.style.display = 'none';
-        document.getElementById('targetUpload').classList.remove('has-image');
+        const session = touchActiveSession();
+        if (session) {
+            session.references = (session.references || []).filter((reference) => reference.id !== session.activeReferenceIds[0]);
+            session.activeReferenceIds = session.references[0]?.id ? [session.references[0].id] : [];
+            saveSessionLibrary();
+            renderReferenceTray();
+            renderReferenceRail();
+            renderSessionHub();
+            if (session.activeReferenceIds[0]) {
+                activateReference(session.activeReferenceIds[0]);
+            } else {
+                targetImage = null;
+                currentReferenceDataUrl = null;
+                targetPreview.style.display = 'none';
+                document.getElementById('targetUpload').classList.remove('has-image');
+            }
+        }
     }
 
     updateProcessButton();
@@ -1980,6 +2743,21 @@ function setRefImageData(imageData) {
     targetImg.src = dataUrl;
     targetPreview.style.display = 'block';
     document.getElementById('targetUpload').classList.add('has-image');
+    const session = touchActiveSession();
+    if (session) {
+        const existing = (session.references || []).find((reference) => reference.dataUrl === dataUrl);
+        const referenceRecord = existing || {
+            id: `ref_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            dataUrl,
+            name: `Reference ${session.references.length + 1}`
+        };
+        session.references = [referenceRecord, ...(session.references || []).filter((reference) => reference.id !== referenceRecord.id)].slice(0, 12);
+        session.activeReferenceIds = [referenceRecord.id];
+        saveSessionLibrary();
+        renderReferenceTray();
+        renderReferenceRail();
+        renderSessionHub();
+    }
     
     const img = new Image();
     img.onload = () => {
@@ -2653,27 +3431,28 @@ function initPresetPanel() {
     const presetPanel = document.getElementById('presetPanel');
     if (!presetPanel) return;
 
-    const presets = presetManager.getAllPresets();
+    const presets = getVisiblePresets();
+    const session = getActiveSession();
 
     presetPanel.innerHTML = `
         <div class="preset-panel-header">
-            <h3>Presets</h3>
+            <h3>Session Looks</h3>
             <button class="preset-panel-close" id="closePresetPanel">×</button>
         </div>
         <div class="preset-search">
-            <input type="text" id="presetSearchInput" placeholder="Search presets..." />
+            <input type="text" id="presetSearchInput" placeholder="Search built-ins and this session's looks..." />
         </div>
         <div class="preset-list" id="presetList">
             ${renderPresetCardsMarkup(presets)}
         </div>
         <div class="preset-save-form">
-            <input type="text" id="presetNameInput" placeholder="Preset name" />
-            <input type="text" id="presetTagsInput" placeholder="Tags (comma separated)" value="custom" />
+            <input type="text" id="presetNameInput" placeholder="Save current look for ${session?.name || 'session'}" />
+            <input type="text" id="presetTagsInput" placeholder="Tags (comma separated)" value="session look" />
         </div>
         <div class="preset-actions">
-            <button class="preset-action-btn" id="saveCurrentAsPreset">Save Current</button>
+            <button class="preset-action-btn" id="saveCurrentAsPreset">Save Look</button>
             <button class="preset-action-btn" id="importPresetsBtn">Import</button>
-            <button class="preset-action-btn" id="exportPresetsBtn">Export All</button>
+            <button class="preset-action-btn" id="exportPresetsBtn">Export Session Looks</button>
         </div>
         <input type="file" id="presetImportInput" accept=".json" hidden />
     `;
@@ -2681,8 +3460,7 @@ function initPresetPanel() {
     document.getElementById('closePresetPanel')?.addEventListener('click', togglePresetPanel);
 
     document.getElementById('presetSearchInput')?.addEventListener('input', (e) => {
-        const query = e.target.value;
-        const filtered = presetManager.searchPresets(query);
+        const filtered = searchVisiblePresets(e.target.value);
         renderPresetList(filtered);
     });
     bindPresetPanelActions();
@@ -2690,6 +3468,21 @@ function initPresetPanel() {
     document.getElementById('importPresetsBtn')?.addEventListener('click', () => document.getElementById('presetImportInput')?.click());
     document.getElementById('exportPresetsBtn')?.addEventListener('click', exportAllPresets);
     document.getElementById('presetImportInput')?.addEventListener('change', importPresetFile);
+}
+
+function getVisiblePresets() {
+    const builtIns = presetManager.getBuiltInPresets().map((preset) => ({ ...preset, builtIn: true, scope: 'Built-in' }));
+    const sessionLooks = getSessionPresets().map((look) => ({ ...look, builtIn: false, scope: 'Session' }));
+    return [...sessionLooks, ...builtIns];
+}
+
+function searchVisiblePresets(query) {
+    const normalized = (query || '').trim().toLowerCase();
+    if (!normalized) return getVisiblePresets();
+    return getVisiblePresets().filter((preset) => {
+        if (preset.name.toLowerCase().includes(normalized)) return true;
+        return (preset.tags || []).some((tag) => tag.toLowerCase().includes(normalized));
+    });
 }
 
 function renderPresetList(presets) {
@@ -2701,13 +3494,13 @@ function renderPresetList(presets) {
 }
 
 function renderPresetCardsMarkup(presets) {
-    const activePresetId = getReferenceMemory().selectedPresetId;
+    const activePresetId = getActiveSession()?.focusedLookId || getReferenceMemory().selectedPresetId;
     return presets.map(p => `
         <div class="preset-card ${activePresetId === p.id ? 'active' : ''}" data-preset-id="${p.id}">
             <div class="preset-name">${p.name}</div>
             <div class="preset-tags">${(p.tags || []).join(', ')}</div>
             <div class="preset-meta">
-                <span class="preset-badge">${p.builtIn ? 'Built-in' : 'Saved'}</span>
+                <span class="preset-badge">${p.scope || (p.builtIn ? 'Built-in' : 'Saved')}</span>
                 <div class="preset-inline-actions">
                     <button type="button" data-action="apply" data-preset-id="${p.id}">Apply</button>
                     <button type="button" data-action="duplicate" data-preset-id="${p.id}">Duplicate</button>
@@ -2726,14 +3519,25 @@ function bindPresetPanelActions() {
             const action = button.dataset.action;
             if (action === 'apply') loadPreset(presetId);
             if (action === 'duplicate') {
-                presetManager.duplicatePreset(presetId);
+                const preset = getVisiblePresets().find((item) => item.id === presetId);
+                if (preset) {
+                    saveSessionLook({
+                        name: `${preset.name} Copy`,
+                        tags: [...(preset.tags || [])],
+                        adjustments: JSON.parse(JSON.stringify(preset.adjustments || {})),
+                        sourceId: getActiveSourceRecord()?.id || null,
+                        referenceIds: [getActiveSession()?.activeReferenceIds?.[0]].filter(Boolean)
+                    });
+                }
                 initPresetPanel();
-                showStatus('Preset duplicated.', 'success');
+                renderSessionHub();
+                showStatus('Look duplicated.', 'success');
             }
             if (action === 'delete') {
-                presetManager.deletePreset(presetId);
+                deleteSessionLook(presetId);
                 initPresetPanel();
-                showStatus('Preset deleted.', 'success');
+                renderSessionHub();
+                showStatus('Look deleted.', 'success');
             }
         };
     });
@@ -2743,21 +3547,30 @@ function bindPresetPanelActions() {
 }
 
 function loadPreset(presetId) {
-    const allPresets = presetManager.getAllPresets();
-    const preset = allPresets.find(p => p.id === presetId);
+    const preset = getVisiblePresets().find(p => p.id === presetId);
     if (!preset) {
         showStatus('Preset not found.', 'error');
         return;
     }
 
     if (preset.adjustments) {
+        const session = touchActiveSession();
+        if (session) session.focusedLookId = preset.id;
         updateReferenceMemory({ selectedPresetId: preset.id });
         unifiedSession.setStyleState({
             visualStyle: preset.name,
             colorPalette: (preset.tags || []).join(', ')
         });
+        if (!preset.builtIn && preset.sourceId) {
+            activateSource(preset.sourceId);
+        }
+        if (!preset.builtIn && Array.isArray(preset.referenceIds) && preset.referenceIds.length && preset.referenceIds[0]) {
+            activateReference(preset.referenceIds[0]);
+        }
         applyPresetAdjustments(preset.adjustments);
-        showStatus(`Preset "${preset.name}" loaded!`, 'success');
+        renderSessionHub();
+        renderLookStrip();
+        showStatus(`Look "${preset.name}" loaded!`, 'success');
         if (document.getElementById('presetPanel')?.style.display !== 'none') {
             initPresetPanel();
         }
@@ -2876,16 +3689,21 @@ function saveCurrentAsPreset() {
         curvePoints: imageAdjustments.getCurvePoints()
     };
 
-    const preset = presetManager.savePreset({
+    const preset = saveSessionLook({
         name,
         tags: tags.split(',').map(t => t.trim()),
         adjustments,
+        sourceId: getActiveSourceRecord()?.id || null,
+        referenceIds: [getActiveSession()?.activeReferenceIds?.[0]].filter(Boolean),
         referenceMemory: getReferenceMemory(),
-        sessionStyleState: unifiedSession.styleState || null
+        sessionStyleState: unifiedSession.styleState || null,
+        previewDataUrl: resultCanvas?.width ? resultCanvas.toDataURL('image/png') : null
     });
 
     updateReferenceMemory({ selectedPresetId: preset.id });
-    showStatus(`Preset "${name}" saved!`, 'success');
+    renderSessionHub();
+    renderLookStrip();
+    showStatus(`Look "${name}" saved to this session!`, 'success');
     const nameInput = document.getElementById('presetNameInput');
     if (nameInput) nameInput.value = '';
     initPresetPanel();
@@ -2900,12 +3718,27 @@ function importPresetFile(event) {
             const text = String(reader.result || '');
             const data = JSON.parse(text);
             if (Array.isArray(data.presets)) {
-                const count = presetManager.importAllPresets(text);
-                showStatus(`Imported ${count} presets.`, 'success');
+                data.presets.forEach((preset) => {
+                    if (preset.name && preset.adjustments) {
+                        saveSessionLook({
+                            name: preset.name,
+                            tags: preset.tags || [],
+                            adjustments: preset.adjustments,
+                            referenceIds: preset.referenceIds || []
+                        });
+                    }
+                });
+                showStatus(`Imported ${data.presets.length} looks.`, 'success');
             } else {
-                presetManager.importPreset(text);
-                showStatus('Preset imported.', 'success');
+                saveSessionLook({
+                    name: data.name,
+                    tags: data.tags || [],
+                    adjustments: data.adjustments,
+                    referenceIds: data.referenceIds || []
+                });
+                showStatus('Look imported.', 'success');
             }
+            renderSessionHub();
             initPresetPanel();
         } catch (error) {
             showError(`Preset import failed: ${error.message}`);
@@ -2917,7 +3750,12 @@ function importPresetFile(event) {
 
 function exportAllPresets() {
     try {
-        const exportData = presetManager.exportAllPresets();
+        const exportData = JSON.stringify({
+            exportedAt: new Date().toISOString(),
+            sessionId: getActiveSession()?.id || null,
+            sessionName: getActiveSession()?.name || null,
+            presets: getSessionPresets()
+        }, null, 2);
         const blob = new Blob([exportData], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -2937,7 +3775,17 @@ function showLUTExportDialog() {
         showStatus('No processed image available for LUT export.', 'error');
         return;
     }
-
+    const look = getFocusedLook();
+    const source = getActiveSourceRecord();
+    const reference = getActiveReferenceRecord();
+    const safeBaseName = (look?.name || `${source?.name || 'source'}-${reference?.name || 'reference'}`)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    const filenameInput = document.getElementById('lutFilename');
+    const titleInput = document.getElementById('lutTitle');
+    if (filenameInput && !filenameInput.value.trim()) filenameInput.value = safeBaseName || 'chromamatch-lut';
+    if (titleInput && !titleInput.value.trim()) titleInput.value = look?.name || 'ChromaMatch LUT';
     document.getElementById('lutExportModal').style.display = 'flex';
 }
 
@@ -2976,6 +3824,22 @@ async function exportLUT() {
             }
         });
 
+        const session = touchActiveSession();
+        const look = session?.looks?.find((item) => item.id === session.focusedLookId);
+        if (look) {
+            look.exportHistory = [
+                {
+                    filename: result.filename,
+                    format,
+                    lutSize,
+                    bitDepth,
+                    exportedAt: new Date().toISOString()
+                },
+                ...(look.exportHistory || [])
+            ].slice(0, 12);
+            saveSessionLibrary();
+        }
+
         showStatus(`LUT exported: ${result.filename}`, 'success');
 
         setTimeout(() => {
@@ -2993,6 +3857,10 @@ async function exportLUT() {
 document.addEventListener('DOMContentLoaded', () => {
     exposeUiActions();
     initializeTheme();
+    loadSessionLibrary();
+    hydrateActiveSession();
+    renderSessionHub();
+    exitWorkspace();
     if (themeToggle) {
         themeToggle.addEventListener('click', toggleTheme);
     }
