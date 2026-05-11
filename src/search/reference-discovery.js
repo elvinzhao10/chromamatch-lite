@@ -72,6 +72,67 @@ const FILM_DATABASE = [
     { title: "Saving Private Ryan", year: 1998, director: "Steven Spielberg", dp: "Janusz Kaminski", keywords: "desaturated war hand-held gritty" },
 ];
 
+const VISUAL_TECHNIQUES = [
+    'silhouette', 'reflection', 'frame in a frame', 'wide shot', 'close up', 'two shot',
+    'tracking', 'handheld', 'symmetry', 'tableau', 'whip pan', 'snorricam', 'split diopter',
+    'underwater', 'worms eye', 'top down', 'low angle', 'high angle', 'overhead', 'ultra wide'
+];
+
+const COLOR_TERMS = [
+    'teal', 'orange', 'cyan', 'warm', 'cool', 'moody', 'dark', 'bright', 'vibrant',
+    'desaturated', 'pastel', 'neon', 'noir', 'vintage', 'golden', 'blue', 'green',
+    'red', 'pink', 'purple', 'yellow', 'amber', 'magenta', 'monochrome'
+];
+
+const SUBJECT_TAGS = [
+    'apartment', 'city', 'street', 'hallway', 'kitchen', 'bedroom', 'car interior',
+    'office', 'restaurant', 'bar', 'diner', 'cafe', 'bathroom', 'forest', 'desert',
+    'ocean', 'mountains', 'rain', 'snow', 'fire', 'window', 'mirror', 'silhouette',
+    'crowd', 'space'
+];
+
+const VIBE_ALIASES = {
+    bladerunner: ['cyberpunk', 'neon', 'rain', 'city', 'night'],
+    cyberpunk: ['neon', 'city', 'night', 'practical lighting', 'rain'],
+    vintage: ['film still', 'grain', 'warm', 'period'],
+    moody: ['low key lighting', 'shadow', 'contrast'],
+    dreamy: ['soft light', 'haze', 'pastel'],
+    gritty: ['desaturated', 'handheld', 'texture'],
+    commercial: ['clean lighting', 'bright', 'minimal'],
+    noir: ['silhouette', 'shadow', 'practical lamp', 'window']
+};
+
+const SEARCH_TAXONOMY = {
+    shotSizes: ['extreme wide', 'wide shot', 'medium shot', 'close up', 'extreme close up', 'two shot', 'insert shot'],
+    framing: ['symmetry', 'centered', 'frame in a frame', 'negative space', 'overhead', 'top down', 'low angle', 'high angle'],
+    lighting: ['backlit', 'soft light', 'hard light', 'practical lighting', 'window light', 'volumetric', 'low key lighting', 'rim light'],
+    setting: ['interior', 'exterior', 'night', 'day', 'sunset', 'dawn', 'rain', 'fog', 'snow', 'urban', 'rural'],
+    movement: ['tracking', 'handheld', 'dolly', 'static', 'whip pan'],
+    aspect: ['widescreen', 'anamorphic', 'academy', 'letterboxed']
+};
+
+const TERM_NORMALIZATIONS = {
+    bladerunner: 'blade runner',
+    'blade-runner': 'blade runner',
+    grandbudapest: 'grand budapest',
+    cyberpunky: 'cyberpunk',
+    cinamtic: 'cinematic',
+    cinemtaic: 'cinematic',
+    moodyy: 'moody',
+    sillhouette: 'silhouette',
+    silhoutte: 'silhouette',
+    colorgrading: 'color grading',
+    colour: 'color',
+    colours: 'colors',
+    tealorange: 'teal orange'
+};
+
+const GENERIC_FILM_WORDS = new Set([
+    'dark', 'light', 'drive', 'her', 'roma', 'gravity', 'arrival', 'moonlight',
+    'joker', 'barbie', 'dune', 'poor', 'things', 'lost', 'country', 'there',
+    'will', 'blood', 'social', 'network', 'fight', 'club', 'taxi', 'driver'
+]);
+
 class SearchService {
     constructor() {
         this.providers = API_PROVIDERS;
@@ -170,8 +231,8 @@ class SearchService {
 
         try {
             const perPage = options.perPage || 12;
-            const tags = query.split(/\s+/).join(',');
-            const url = `https://api.flickr.com/services/feeds/photos_public.gne?format=json&nojsoncallback=1&tags=${encodeURIComponent(tags)}&per_page=${perPage}&tagmode=all`;
+            const tags = this.tokenize(query).slice(0, 4).join(',');
+            const url = `https://api.flickr.com/services/feeds/photos_public.gne?format=json&nojsoncallback=1&tags=${encodeURIComponent(tags || query)}&per_page=${perPage}&tagmode=any`;
             const r = await fetch(url);
             const d = await r.json();
             const results = (d.items || []).map(item => {
@@ -276,7 +337,7 @@ class SearchService {
     async search(query, sources = ['wikimedia', 'flickr'], options = {}) {
         const results = [];
         const seen = new Set();
-        const allSources = sources.length > 0 ? sources : ['wikimedia', 'flickr'];
+        const allSources = this.resolveAvailableSources(sources.length > 0 ? sources : ['wikimedia', 'flickr']);
 
         const tasks = allSources.map(source => {
             switch (source) {
@@ -301,28 +362,45 @@ class SearchService {
         return { results };
     }
 
+    resolveAvailableSources(sources) {
+        const requested = sources?.length ? sources : ['wikimedia', 'flickr'];
+        const available = requested.filter((source) => this.hasApiKey(source));
+        if (available.length) return available;
+        return ['wikimedia', 'flickr'];
+    }
+
     /* ─── Smart search ────────────────────────────────────────────────── */
     matchFilm(query) {
         if (!query || query.length < 2) return null;
-        const q = query.toLowerCase();
+        const q = this.normalizeQuery(query);
         let best = null, bestScore = 0;
         for (const f of FILM_DATABASE) {
             let score = 0;
-            const t = f.title.toLowerCase();
+            let titleSignal = false;
+            const t = this.normalizeQuery(f.title);
             if (t === q) score = 100;
-            else if (t.includes(q) && q.length >= 3) score = 80 + (q.length / t.length) * 20;
-            else if (q.includes(t)) score = 75;
+            else if (t.includes(q) && q.length >= 3) {
+                score = 80 + (q.length / t.length) * 20;
+                titleSignal = true;
+            } else if (q.includes(t)) {
+                score = 75;
+                titleSignal = true;
+            }
             else {
                 const words = q.split(/\s+/);
                 const tWords = t.split(/\s+/);
+                const significantTitleWords = tWords.filter((word) => word.length >= 4 && !GENERIC_FILM_WORDS.has(word));
                 let matched = 0;
                 for (const w of words) {
                     if (w.length < 3) continue;
-                    for (const tw of tWords) {
+                    for (const tw of significantTitleWords) {
                         if (tw === w || tw.startsWith(w) || w.startsWith(tw)) { matched++; break; }
                     }
                 }
-                if (matched > 0) score = (matched / Math.max(tWords.length, 1)) * 70;
+                if (matched > 0) {
+                    score = (matched / Math.max(significantTitleWords.length || 1, 1)) * 70;
+                    titleSignal = true;
+                }
                 for (const w of words) {
                     if (w.length < 3) continue;
                     if (f.keywords.split(/\s+/).includes(w)) score += 15;
@@ -330,114 +408,399 @@ class SearchService {
                 if (f.director.toLowerCase().includes(q)) score = Math.max(score, 60);
                 if (f.dp.toLowerCase().includes(q)) score = Math.max(score, 55);
                 if (String(f.year) === q) score = Math.max(score, 50);
+                if (!titleSignal && score < 40) score = 0;
             }
             if (score > bestScore) { bestScore = score; best = f; }
         }
-        return bestScore >= 20 ? best : null;
+        return bestScore >= 30 ? best : null;
     }
 
     classifyQuery(query) {
-        const lower = query.toLowerCase();
+        const lower = this.normalizeQuery(query);
         const film = this.matchFilm(query);
-        if (film) return { type: 'film', film };
-        if (/^\d{4}$/.test(query.trim())) return { type: 'year', year: query.trim() };
-        if (/\b(film|movie|cinema|cinematography|director)\b/i.test(lower)) return { type: 'film-keyword' };
+        const facets = this.extractFacets(query);
+        if (film) return { type: 'film', film, facets };
+        if (/^\d{4}$/.test(query.trim())) return { type: 'year', year: query.trim(), facets };
+        if (/\b(film|movie|cinema|cinematography|director|dp|shot|still)\b/i.test(lower)) return { type: 'film-keyword', facets };
         const styleRe = /\b(teal|orange|cyan|warm|cool|moody|dark|bright|vibrant|desaturated|pastel|neon|noir|vintage|cyberpunk|cinematic|retro|golden|blue|green|red|pink|purple|yellow)\b/i;
         const hasStyle = styleRe.test(lower);
         const isShort = lower.split(/\s+/).length <= 4;
-        if (hasStyle && isShort) return { type: 'style' };
-        if (hasStyle || lower.length > 30) return { type: 'descriptive' };
-        return { type: 'keyword' };
+        if (hasStyle && isShort) return { type: 'style', facets };
+        if (hasStyle || lower.length > 30) return { type: 'descriptive', facets };
+        return { type: 'keyword', facets };
+    }
+
+    extractFacets(query) {
+        const lower = this.normalizeQuery(query);
+        const colors = COLOR_TERMS.filter((term) => lower.includes(term));
+        const techniques = VISUAL_TECHNIQUES.filter((term) => lower.includes(term));
+        const subjects = SUBJECT_TAGS.filter((term) => lower.includes(term));
+        const vibes = Object.keys(VIBE_ALIASES).filter((term) => lower.includes(term));
+        const peopleHints = /\b(director|cinematographer|dp|production designer)\b/.test(lower);
+        const taxonomy = this.parseTaxonomy(lower);
+
+        return {
+            colors,
+            techniques,
+            subjects,
+            vibes,
+            peopleHints,
+            taxonomy
+        };
+    }
+
+    canonicalizeQuery(query) {
+        return query
+            .toLowerCase()
+            .replace(/\bblade\s*runner\b/g, 'bladerunner')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    normalizeQuery(query) {
+        let normalized = this.canonicalizeQuery(query);
+        for (const [from, to] of Object.entries(TERM_NORMALIZATIONS)) {
+            normalized = normalized.replace(new RegExp(`\\b${from}\\b`, 'g'), to);
+        }
+        return normalized
+            .replace(/\bbladerunner\b/g, 'blade runner')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    parseTaxonomy(normalizedQuery) {
+        const matches = {};
+        for (const [group, terms] of Object.entries(SEARCH_TAXONOMY)) {
+            matches[group] = terms.filter((term) => normalizedQuery.includes(term));
+        }
+        return matches;
+    }
+
+    editDistance(a, b) {
+        if (a === b) return 0;
+        if (!a.length) return b.length;
+        if (!b.length) return a.length;
+        const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+        for (let i = 1; i <= a.length; i++) {
+            let prev = i - 1;
+            dp[0] = i;
+            for (let j = 1; j <= b.length; j++) {
+                const nextPrev = dp[j];
+                dp[j] = Math.min(
+                    dp[j] + 1,
+                    dp[j - 1] + 1,
+                    prev + (a[i - 1] === b[j - 1] ? 0 : 1)
+                );
+                prev = nextPrev;
+            }
+        }
+        return dp[b.length];
+    }
+
+    fuzzyIncludes(haystack, needle) {
+        const normalizedHaystack = this.normalizeQuery(haystack);
+        const normalizedNeedle = this.normalizeQuery(needle);
+        if (!normalizedNeedle) return false;
+        if (normalizedHaystack.includes(normalizedNeedle)) return true;
+
+        const hayTokens = normalizedHaystack.split(/\s+/).filter(Boolean);
+        const needleTokens = normalizedNeedle.split(/\s+/).filter(Boolean);
+        if (!needleTokens.length || !hayTokens.length) return false;
+
+        return needleTokens.every((needleToken) =>
+            hayTokens.some((hayToken) =>
+                hayToken === needleToken ||
+                hayToken.startsWith(needleToken) ||
+                needleToken.startsWith(hayToken) ||
+                (Math.abs(hayToken.length - needleToken.length) <= 1 && this.editDistance(hayToken, needleToken) <= 1)
+            )
+        );
+    }
+
+    joinUniqueTerms(parts) {
+        return [...new Set(parts.filter(Boolean).flatMap((part) => String(part).split(/\s+/).filter(Boolean)))].join(' ');
     }
 
     buildSearchQueries(query) {
         const c = this.classifyQuery(query);
         if (c.type === 'film' && c.film) {
             const f = c.film;
-            return [...new Set([f.title, `${f.title} ${f.year}`, f.keywords])];
+            const shotTerms = c.facets?.taxonomy?.shotSizes?.slice(0, 1) || [];
+            const lightingTerms = c.facets?.taxonomy?.lighting?.slice(0, 1) || [];
+            return [...new Set([
+                f.title,
+                `${f.title} ${f.year}`,
+                `${f.title} cinematography still`,
+                `${f.title} color palette`,
+                `${f.title} widescreen frame`,
+                `${f.title} ${shotTerms.join(' ')} ${lightingTerms.join(' ')}`.trim(),
+                f.keywords
+            ].filter(Boolean))];
         }
         if (c.type === 'descriptive') {
             const stop = new Set(['a','an','the','is','are','was','were','be','been','have','has','had','do','does','did','will','would','could','should','may','might','can','i','me','my','we','our','you','your','he','she','it','they','them','this','that','these','those','with','for','and','but','or','nor','not','to','of','in','on','at','by','from','up','down','out','off','over','want','need','like','look','looking','find','search','give','show','make','scene','image','photo','picture','reference','film','movie','cinematic','color','colors','palette','grade','grading','style','look','feel','vibe','some','any','all','each','every','both','few','more','most','other','very','really','quite','just','so','too','also','only','even','still','get','got','getting','please','help','try','trying','going']);
-            const words = query.toLowerCase().split(/[\s,]+/).filter(w => w.length >= 3 && !stop.has(w));
+            const words = this.normalizeQuery(query).split(/[\s,]+/).filter(w => w.length >= 3 && !stop.has(w));
             if (!words.length) return [query];
             const qs = [words.join(' ')];
             if (words.length > 3) {
                 qs.push(words.slice(0, 3).join(' '));
                 qs.push(words.slice(-3).join(' '));
             }
-            return [...new Set(qs)];
+            const vibeTerms = c.facets?.vibes?.flatMap((vibe) => VIBE_ALIASES[vibe] || []) || [];
+            const techniqueTerms = c.facets?.techniques || [];
+            const taxonomyTerms = Object.values(c.facets?.taxonomy || {}).flat().slice(0, 4);
+            const subjectTerms = c.facets?.subjects?.slice(0, 2) || [];
+            return [...new Set([
+                ...qs,
+                `${words.slice(0, 4).join(' ')} cinematography`,
+                `${words.slice(0, 4).join(' ')} color grading`,
+                this.joinUniqueTerms([...words.slice(0, 3), ...vibeTerms.slice(0, 2), ...techniqueTerms.slice(0, 2)]),
+                this.joinUniqueTerms([...subjectTerms, ...taxonomyTerms.slice(0, 2), ...c.facets.colors.slice(0, 2), 'movie still']),
+                this.joinUniqueTerms([...subjectTerms, ...taxonomyTerms.slice(0, 2), ...vibeTerms.slice(0, 2), 'cinematic frame'])
+            ])];
         }
-        return [...new Set([query])];
+        const taxonomyTerms = Object.values(c.facets?.taxonomy || {}).flat().slice(0, 3);
+        return [...new Set([
+            query,
+            `${query} cinematography`,
+            `${query} color palette`,
+            `${query} movie still`,
+            this.joinUniqueTerms([query, ...taxonomyTerms])
+        ])];
+    }
+
+    tokenize(query) {
+        return query
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .filter((token) => token.length >= 3);
+    }
+
+    inferPreferredSources(classification, requestedSources) {
+        if (requestedSources?.length) {
+            return requestedSources;
+        }
+
+        if (classification?.type === 'film' || classification?.type === 'film-keyword') {
+            return ['tmdb', 'wikimedia', 'flickr', 'unsplash', 'pexels'];
+        }
+
+        if (classification?.type === 'style' || classification?.type === 'descriptive') {
+            return ['unsplash', 'pexels', 'wikimedia', 'flickr'];
+        }
+
+        return ['wikimedia', 'flickr', 'unsplash', 'pexels'];
+    }
+
+    resolveMode(mode) {
+        switch (mode) {
+            case 'cinema':
+                return this.resolveAvailableSources(['tmdb', 'wikimedia', 'flickr', 'unsplash', 'pexels']);
+            case 'photo':
+                return this.resolveAvailableSources(['unsplash', 'pexels', 'wikimedia', 'flickr']);
+            case 'archive':
+                return this.resolveAvailableSources(['wikimedia', 'flickr']);
+            case 'ai':
+            default:
+                return this.resolveAvailableSources(['tmdb', 'unsplash', 'pexels', 'wikimedia', 'flickr']);
+        }
+    }
+
+    rankResults(results, query, classification) {
+        const tokens = this.tokenize(query);
+        const facets = classification?.facets || {};
+        const sourceWeights = {
+            tmdb: classification?.type === 'film' ? 1.35 : 1.05,
+            unsplash: classification?.type === 'style' || classification?.type === 'descriptive' ? 1.2 : 1.0,
+            pexels: classification?.type === 'style' || classification?.type === 'descriptive' ? 1.18 : 1.0,
+            wikimedia: 1.0,
+            flickr: 0.92
+        };
+
+        return results
+            .map((result, index) => {
+                const haystack = `${result.description || ''} ${result.author || ''} ${result.source || ''}`.toLowerCase();
+                let score = sourceWeights[result.source] || 1;
+                const canonicalHaystack = this.normalizeQuery(haystack);
+
+                for (const token of tokens) {
+                    if (this.fuzzyIncludes(canonicalHaystack, token)) {
+                        score += 0.45;
+                    }
+                }
+
+                if (classification?.film?.title && this.fuzzyIncludes(haystack, classification.film.title)) {
+                    score += 1.3;
+                }
+
+                for (const color of facets.colors || []) {
+                    if (this.fuzzyIncludes(canonicalHaystack, color)) score += 0.28;
+                }
+
+                for (const technique of facets.techniques || []) {
+                    if (this.fuzzyIncludes(canonicalHaystack, technique)) score += 0.4;
+                }
+
+                for (const subject of facets.subjects || []) {
+                    if (this.fuzzyIncludes(canonicalHaystack, subject)) score += 0.2;
+                }
+
+                for (const group of Object.values(facets.taxonomy || {})) {
+                    for (const term of group) {
+                        if (this.fuzzyIncludes(canonicalHaystack, term)) score += 0.22;
+                    }
+                }
+
+                if (classification?.type === 'film' || classification?.type === 'film-keyword') {
+                    if (/poster|cover|logo|fan art|bluray|dvd|soundtrack/.test(canonicalHaystack)) {
+                        score -= 1.4;
+                    }
+                    if (/backdrop|still|scene|frame|cinematography/.test(canonicalHaystack)) {
+                        score += 1.1;
+                    }
+                }
+
+                if (classification?.type === 'style' || classification?.type === 'descriptive') {
+                    if (/portrait|headshot|selfie/.test(canonicalHaystack)) {
+                        score -= 0.8;
+                    }
+                    if (/lighting|moody|cinematic|sunset|night|neon|interior|landscape/.test(canonicalHaystack)) {
+                        score += 0.65;
+                    }
+                }
+
+                const aspect = result.width && result.height ? result.width / Math.max(result.height, 1) : 1;
+                if (aspect > 1.2) {
+                    score += 0.14;
+                }
+                if ((classification?.type === 'film' || classification?.type === 'film-keyword') && aspect < 0.8) {
+                    score -= 0.7;
+                }
+                if ((classification?.type === 'style' || classification?.type === 'descriptive') && aspect < 0.7) {
+                    score -= 0.35;
+                }
+                if ((result.width || 0) >= 1000 || (result.height || 0) >= 1000) {
+                    score += 0.12;
+                }
+                if (/screenshot|gallery|wallpaper|blog/.test(canonicalHaystack)) {
+                    score -= 0.25;
+                }
+                if (/illustration|painting|drawing|vector|icon|logo|poster art|concept art/.test(canonicalHaystack)) {
+                    score -= 0.9;
+                }
+                if (/frame|still|stills|shot|cinema|cinematography|scene/.test(canonicalHaystack)) {
+                    score += 0.35;
+                }
+                if (/interview|behind the scenes|press|festival|red carpet/.test(canonicalHaystack)) {
+                    score -= 0.75;
+                }
+
+                score += Math.max(0, 0.18 - index * 0.01);
+                return { ...result, _score: score };
+            })
+            .sort((a, b) => b._score - a._score)
+            .map(({ _score, ...result }) => result);
+    }
+
+    async searchMultiQuery(queries, sources, options = {}) {
+        const collected = [];
+        const seen = new Set();
+
+        for (const query of queries.slice(0, 5)) {
+            const { results } = await this.search(query, sources, options);
+            for (const result of results) {
+                const key = result.url || result.id;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    collected.push(result);
+                }
+            }
+
+            if (collected.length >= (options.limit || 18)) {
+                break;
+            }
+        }
+
+        return collected;
     }
 
     async smartSearch(rawQuery, webSources) {
-        const allResults = [];
-        const seen = new Set();
         const c = this.classifyQuery(rawQuery);
         const queries = this.buildSearchQueries(rawQuery);
-        const sources = webSources || ['wikimedia', 'flickr'];
+        const preferredSources = this.inferPreferredSources(c, webSources);
+        let allResults = [];
 
-        for (const q of queries.slice(0, 4)) {
-            try {
-                const { results } = await this.search(q, sources, { perPage: 10 });
-                for (const r of results) {
-                    const key = r.url || r.id;
-                    if (!seen.has(key)) { seen.add(key); allResults.push(r); }
-                }
-            } catch {}
-            if (allResults.length >= 12) break;
-        }
+        try {
+            allResults = await this.searchMultiQuery(queries, preferredSources, { perPage: 10, limit: 18 });
+        } catch {}
 
-        if (allResults.length === 0 && sources.includes('tmdb')) {
+        if (allResults.length === 0) {
+            const fallbackQuery = rawQuery.split(/\s+/).filter(w => w.length >= 3).slice(0, 3).join(' ');
             try {
-                const fallback = rawQuery.split(/\s+/).filter(w => w.length >= 3).slice(0, 2).join(' ');
-                const { results } = await this.search(fallback || rawQuery, ['wikimedia', 'flickr'], { perPage: 10 });
-                for (const r of results) {
-                    const key = r.url || r.id;
-                    if (!seen.has(key)) { seen.add(key); allResults.push(r); }
-                }
+                allResults = await this.searchMultiQuery(
+                    [fallbackQuery || rawQuery],
+                    ['wikimedia', 'flickr'],
+                    { perPage: 10, limit: 12 }
+                );
             } catch {}
         }
 
-        return { results: allResults, filmMatch: c.film || null, classification: c };
+        return {
+            results: this.rankResults(allResults, rawQuery, c),
+            filmMatch: c.film || null,
+            classification: c
+        };
     }
 
     /* ─── AI-driven search ───────────────────────────────────────────── */
     async aiDrivenSearch(userQuery, aiConfig) {
-        const { baseUrl, apiKey, model, sources } = aiConfig;
+        const { provider, baseUrl, apiKey, model, sources, contextHint } = aiConfig;
         if (!apiKey || !baseUrl) {
             return this.smartSearch(userQuery, ['wikimedia', 'flickr']);
         }
 
+        const classification = this.classifyQuery(userQuery);
         const allResults = [];
         const seen = new Set();
-        const searchSources = sources || ['wikimedia', 'flickr'];
+        const searchSources = this.resolveAvailableSources(sources?.length ? sources : this.inferPreferredSources(classification));
 
         try {
-            const r = await fetch(`${baseUrl}/chat/completions`, {
+            const providerKey = provider || 'openai';
+            const adapter = typeof UnifiedSession !== 'undefined' ? new UnifiedSession() : null;
+            const providerConfig = PROVIDER_CONFIGS?.[providerKey];
+            if (!adapter || !providerConfig) {
+                throw new Error('AI search adapter unavailable');
+            }
+
+            const request = adapter.buildChatRequest(
+                providerKey,
+                { provider: providerKey, baseUrl, apiKey, chatModel: model || providerConfig.chatModels?.[0]?.value || '' },
+                [{ role: 'user', text: contextHint || userQuery }],
+                `You optimize fuzzy search for color grading reference images.
+Return exactly 4 short search queries, one per line.
+Prioritize:
+- film stills or cinematic frames when the user hints at movies
+- lighting, palette, mood, lens, environment, shot size, framing, and time-of-day terms
+- convert vague taste into concrete visual tags like "widescreen frame", "practical lighting", "night exterior", "symmetrical composition"
+- no explanations
+- no numbering
+- avoid generic words like "beautiful", "nice", "cool" unless paired with concrete visual terms
+Detected search mode: ${classification.type}
+Detected facets: ${JSON.stringify(classification.facets)}`
+            );
+
+            const r = await fetch(request.url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                body: JSON.stringify({
-                    model: model || 'gpt-4o',
-                    messages: [{
-                        role: 'system',
-                        content: `You are a professional image search query optimizer for color grading reference images. 
-Given a user's vague description of a desired look, generate 3 concise, high-quality image search keywords.
-Rules:
-- Each keyword must be 2-5 words maximum
-- Focus on visual descriptors: colors, lighting, mood, composition, film style
-- Include film names if relevant
-- Include specific photography/cinematography terms
-- Output ONLY the 3 keywords, one per line, no numbering, no explanation
-- Make each keyword self-contained and searchable`
-                    }, {
-                        role: 'user',
-                        content: `User wants: "${userQuery}"`
-                    }]
-                })
+                headers: request.headers,
+                body: JSON.stringify(request.body)
             });
             const data = await r.json();
-            const text = data.choices?.[0]?.message?.content || '';
+            if (!r.ok) {
+                throw new Error(data?.error?.message || data?.message || String(r.status));
+            }
+            const text = providerConfig.parseChatReply(data) || '';
             const aiQueries = text.split('\n').map(l => l.replace(/^[\d.\-\s]+/, '').trim()).filter(l => l.length >= 2);
 
             const allQueries = [...new Set([...aiQueries.slice(0, 4), ...this.buildSearchQueries(userQuery)])];
@@ -458,9 +821,9 @@ Rules:
         }
 
         return {
-            results: allResults,
+            results: this.rankResults(allResults, userQuery, classification),
             filmMatch: this.matchFilm(userQuery),
-            classification: this.classifyQuery(userQuery),
+            classification,
             aiDriven: true
         };
     }

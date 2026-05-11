@@ -103,7 +103,7 @@ class SmartMatcher {
         let totalDE = 0;
         let count = 0;
 
-        for (let i = 0; i < srcLab.length; i += step * 4) {
+        for (let i = 0; i < srcLab.length; i += step) {
             const srcPixel = [srcLab[i], srcLab[i + 1], srcLab[i + 2]];
             const refPixel = [refLab[i], refLab[i + 1], refLab[i + 2]];
             const resPixel = [resLab[i], resLab[i + 1], resLab[i + 2]];
@@ -386,7 +386,7 @@ class SmartMatcher {
 
     smartTransfer(sourceImageData, targetImageData, options = {}) {
         const {
-            method = 'reinhard-lab',
+            method = 'hybrid-lab',
             strength = 1.0,
             useAdaptiveStrength = true,
             useRegionAware = false,
@@ -414,6 +414,8 @@ class SmartMatcher {
         } else if (useAdaptiveStrength) {
             const weights = this.computeAdaptiveStrength(sourceImageData, targetImageData, sampleStep);
             result = this.transferWithAdaptiveStrength(sourceImageData, targetImageData, weights, strength, sampleStep);
+        } else if (method === 'hybrid-lab') {
+            result = this.colorTransfer.transferHybridLab(sourceImageData, targetImageData, strength, sampleStep).imageData;
         } else {
             result = this.transferReinhardLab(sourceImageData, targetImageData, strength, sampleStep).imageData;
         }
