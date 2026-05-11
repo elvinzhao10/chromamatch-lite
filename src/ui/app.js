@@ -22,6 +22,9 @@ let analysisUpdateTimer = null;
 let strengthDebounceTimer = null;
 let adjustmentFrame = null;
 let analysisFrame = null;
+let interactiveAdjustTimer = null;
+let isInteractiveAdjusting = false;
+let adjustmentPreviewBaseImageData = null;
 let shouldAutoScrollToResults = true;
 let currentReferenceDataUrl = null;
 const REFERENCE_MEMORY_KEY = 'chromamatch_reference_memory';
@@ -72,10 +75,36 @@ const strengthValue = document.getElementById('strengthValue');
 const algorithmMethod = document.getElementById('algorithmMethod');
 const performanceMode = document.getElementById('performanceMode');
 const methodHint = document.getElementById('methodHint');
+const curvesCanvas = document.getElementById('curvesCanvas');
+const resetCurveBtn = document.getElementById('resetCurveBtn');
+const shadowWheelCanvas = document.getElementById('shadowWheelCanvas');
+const shadowWheelColor = document.getElementById('shadowWheelColor');
+const shadowWheelAmount = document.getElementById('shadowWheelAmount');
+const shadowWheelAmountValue = document.getElementById('shadowWheelAmountValue');
+const midtoneWheelCanvas = document.getElementById('midtoneWheelCanvas');
+const midtoneWheelColor = document.getElementById('midtoneWheelColor');
+const midtoneWheelAmount = document.getElementById('midtoneWheelAmount');
+const midtoneWheelAmountValue = document.getElementById('midtoneWheelAmountValue');
+const highlightWheelCanvas = document.getElementById('highlightWheelCanvas');
+const highlightWheelColor = document.getElementById('highlightWheelColor');
+const highlightWheelAmount = document.getElementById('highlightWheelAmount');
+const highlightWheelAmountValue = document.getElementById('highlightWheelAmountValue');
+const dashboardWorkspace = document.getElementById('dashboardWorkspace');
 
 // Advanced mode toggles
 const advancedOptionsPanel = document.getElementById('advancedOptionsPanel');
 const presetPanelBtn = document.getElementById('presetPanelBtn');
+const DASHBOARD_LAYOUT_KEY = 'chromamatch_dashboard_layout_v1';
+const DASHBOARD_MARGIN = 16;
+const DASHBOARD_GRID = 12;
+const DASHBOARD_SNAP_DISTANCE = 22;
+const snapPreview = document.getElementById('workspaceSnapPreview');
+const wheelDefaults = {
+    shadow: '#3a6cff',
+    midtone: '#ffffff',
+    highlight: '#ffb347'
+};
+const PANEL_SLOT_KEY = 'chromamatch_panel_slots_v1';
 
 function applyTheme(theme) {
     document.body.setAttribute('data-theme', theme);
@@ -114,6 +143,13 @@ whitesSlider.addEventListener('input', (e) => updateAdjustment('whites', e.targe
 blacksSlider.addEventListener('input', (e) => updateAdjustment('blacks', e.target.value));
 saturationSlider.addEventListener('input', (e) => updateAdjustment('saturation', e.target.value));
 strengthSlider.addEventListener('input', (e) => updateStrength(e.target.value));
+shadowWheelAmount?.addEventListener('input', (e) => updateWheelAdjustment('shadow', e.target.value));
+midtoneWheelAmount?.addEventListener('input', (e) => updateWheelAdjustment('midtone', e.target.value));
+highlightWheelAmount?.addEventListener('input', (e) => updateWheelAdjustment('highlight', e.target.value));
+shadowWheelColor?.addEventListener('input', () => updateWheelColor('shadow'));
+midtoneWheelColor?.addEventListener('input', () => updateWheelColor('midtone'));
+highlightWheelColor?.addEventListener('input', () => updateWheelColor('highlight'));
+resetCurveBtn?.addEventListener('click', resetCurves);
 
 algorithmMethod.addEventListener('change', () => {
     updateMethodHint();
@@ -165,7 +201,7 @@ function revertToImageSelection() {
 }
 
 function closeAllModals() {
-    ['fullExportModal', 'lutExportModal', 'refPopup', 'settingsModal'].forEach((id) => {
+    ['fullExportModal', 'lutExportModal', 'refPopup', 'settingsModal', 'imagePreviewModal'].forEach((id) => {
         const modal = document.getElementById(id);
         if (modal) {
             modal.style.display = 'none';
@@ -173,19 +209,60 @@ function closeAllModals() {
     });
 }
 
-function setActiveDashboardWindow(windowId) {
-    document.querySelectorAll('.dashboard-window').forEach((panel) => {
-        panel.classList.toggle('active', panel.id === windowId);
-    });
+function openImagePreview(src, options = {}) {
+    const modal = document.getElementById('imagePreviewModal');
+    const img = document.getElementById('imagePreviewModalImg');
+    const title = document.getElementById('imagePreviewTitle');
+    const primaryAction = document.getElementById('imagePreviewPrimaryAction');
+    if (!modal || !img || !title || !primaryAction) return;
 
+    img.src = src;
+    title.textContent = options.title || 'Preview';
+    if (options.actionLabel && typeof options.onAction === 'function') {
+        primaryAction.textContent = options.actionLabel;
+        primaryAction.style.display = 'inline-flex';
+        primaryAction.onclick = options.onAction;
+    } else {
+        primaryAction.style.display = 'none';
+        primaryAction.onclick = null;
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeImagePreview() {
+    const modal = document.getElementById('imagePreviewModal');
+    const img = document.getElementById('imagePreviewModalImg');
+    const primaryAction = document.getElementById('imagePreviewPrimaryAction');
+    if (modal) modal.style.display = 'none';
+    if (img) img.src = '';
+    if (primaryAction) {
+        primaryAction.style.display = 'none';
+        primaryAction.onclick = null;
+    }
+}
+
+function setActiveDashboardWindow(windowId, options = {}) {
+    const { forceVisible = false } = options;
+    const panel = document.getElementById(windowId);
+    if (!panel) return;
+    const activePanels = Array.from(document.querySelectorAll('.dashboard-window.active'));
+    if (!forceVisible && panel.classList.contains('active') && activePanels.length > 1) {
+        panel.classList.remove('active');
+    } else {
+        panel.classList.add('active');
+        bringWindowToFront(panel);
+    }
     const resultWindowToggles = document.getElementById('resultWindowToggles');
     if (resultWindowToggles) {
         resultWindowToggles.querySelectorAll('.window-toggle').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.window === windowId);
+            if (!btn.dataset.window) return;
+            const targetPanel = document.getElementById(btn.dataset.window);
+            btn.classList.toggle('active', !!targetPanel && targetPanel.classList.contains('active'));
         });
     }
 
-    if (windowId === 'windowOrigVsResult' && originalCanvas.width) {
+    if (windowId === 'windowOrigVsResult' && panel.classList.contains('active') && originalCanvas.width) {
         const slider = document.getElementById('compareOriginalResultSlider');
         redrawComparison(
             document.getElementById('compareOriginalResultBottom'),
@@ -194,7 +271,7 @@ function setActiveDashboardWindow(windowId) {
             slider ? parseInt(slider.value, 10) : 50
         );
     }
-    if (windowId === 'windowRefVsResult' && referenceCanvas.width) {
+    if (windowId === 'windowRefVsResult' && panel.classList.contains('active') && referenceCanvas.width) {
         const slider = document.getElementById('compareReferenceResultSlider');
         redrawComparison(
             document.getElementById('compareReferenceResultBottom'),
@@ -203,6 +280,383 @@ function setActiveDashboardWindow(windowId) {
             slider ? parseInt(slider.value, 10) : 50
         );
     }
+}
+
+function getDashboardLayouts() {
+    return readJsonStorage(DASHBOARD_LAYOUT_KEY, {});
+}
+
+function getWorkspaceRect() {
+    if (!dashboardWorkspace) return { width: 1280, height: 860 };
+    return {
+        width: dashboardWorkspace.clientWidth || 1280,
+        height: dashboardWorkspace.clientHeight || 860
+    };
+}
+
+function roundToGrid(value) {
+    return Math.round(value / DASHBOARD_GRID) * DASHBOARD_GRID;
+}
+
+function clampWindowRect(rect, panel, workspaceRect) {
+    const minWidth = parseInt(getComputedStyle(panel).minWidth || '320', 10);
+    const minHeight = parseInt(getComputedStyle(panel).minHeight || '220', 10);
+    const width = Math.max(minWidth, Math.min(rect.width, workspaceRect.width - DASHBOARD_MARGIN * 2));
+    const height = Math.max(minHeight, Math.min(rect.height, workspaceRect.height - DASHBOARD_MARGIN * 2));
+    return {
+        width,
+        height,
+        left: Math.max(0, Math.min(rect.left, workspaceRect.width - width)),
+        top: Math.max(0, Math.min(rect.top, workspaceRect.height - height))
+    };
+}
+
+function applyRectToPanel(panel, rect) {
+    const nextLeft = `${rect.left}px`;
+    const nextTop = `${rect.top}px`;
+    const nextWidth = `${rect.width}px`;
+    const nextHeight = `${rect.height}px`;
+    if (panel.style.left !== nextLeft) panel.style.left = nextLeft;
+    if (panel.style.top !== nextTop) panel.style.top = nextTop;
+    if (panel.style.width !== nextWidth) panel.style.width = nextWidth;
+    if (panel.style.height !== nextHeight) panel.style.height = nextHeight;
+}
+
+function getPanelSlots(workspaceRect) {
+    const halfW = Math.floor((workspaceRect.width - DASHBOARD_MARGIN * 3) / 2);
+    const halfH = Math.floor((workspaceRect.height - DASHBOARD_MARGIN * 3) / 2);
+    const thirdW = Math.floor((workspaceRect.width - DASHBOARD_MARGIN * 4) / 3);
+    const thirdH = Math.floor((workspaceRect.height - DASHBOARD_MARGIN * 4) / 3);
+    return {
+        full: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: workspaceRect.width - DASHBOARD_MARGIN * 2, height: workspaceRect.height - DASHBOARD_MARGIN * 2 },
+        left: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: halfW, height: workspaceRect.height - DASHBOARD_MARGIN * 2 },
+        right: { left: DASHBOARD_MARGIN * 2 + halfW, top: DASHBOARD_MARGIN, width: halfW, height: workspaceRect.height - DASHBOARD_MARGIN * 2 },
+        top: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: workspaceRect.width - DASHBOARD_MARGIN * 2, height: halfH },
+        bottom: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN * 2 + halfH, width: workspaceRect.width - DASHBOARD_MARGIN * 2, height: halfH },
+        topLeft: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: halfW, height: halfH },
+        topRight: { left: DASHBOARD_MARGIN * 2 + halfW, top: DASHBOARD_MARGIN, width: halfW, height: halfH },
+        bottomLeft: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN * 2 + halfH, width: halfW, height: halfH },
+        bottomRight: { left: DASHBOARD_MARGIN * 2 + halfW, top: DASHBOARD_MARGIN * 2 + halfH, width: halfW, height: halfH },
+        center: { left: DASHBOARD_MARGIN + thirdW, top: DASHBOARD_MARGIN + thirdH, width: thirdW, height: thirdH }
+    };
+}
+
+function getPreferredSlot(panelId) {
+    const stored = readJsonStorage(PANEL_SLOT_KEY, {});
+    const defaults = {
+        windowThreeUp: 'topLeft',
+        windowAdjustments: 'right',
+        windowAnalysis: 'bottom',
+        windowOrigVsResult: 'topRight',
+        windowRefVsResult: 'center'
+    };
+    return stored[panelId] || defaults[panelId] || 'center';
+}
+
+function savePreferredSlot(panelId, slotName) {
+    const stored = readJsonStorage(PANEL_SLOT_KEY, {});
+    stored[panelId] = slotName;
+    writeJsonStorage(PANEL_SLOT_KEY, stored);
+}
+
+function findClosestSlot(panel, workspaceRect, clientX, clientY) {
+    const slots = getPanelSlots(workspaceRect);
+    const pointer = { x: clientX - workspaceRect.left, y: clientY - workspaceRect.top };
+    const preferred = getPreferredSlot(panel.id);
+    let bestName = preferred;
+    let bestScore = Number.POSITIVE_INFINITY;
+    Object.entries(slots).forEach(([name, rect]) => {
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dx = pointer.x - cx;
+        const dy = pointer.y - cy;
+        const dist = Math.hypot(dx, dy);
+        if (dist < bestScore) {
+            bestScore = dist;
+            bestName = name;
+        }
+    });
+    return { name: bestName, rect: snapWindowRect(slots[bestName], panel, workspaceRect) };
+}
+
+function snapWindowRect(rect, panel, workspaceRect) {
+    let left = rect.left;
+    let top = rect.top;
+    let width = rect.width;
+    let height = rect.height;
+    const rightGap = workspaceRect.width - (left + width);
+    const bottomGap = workspaceRect.height - (top + height);
+
+    if (Math.abs(left - DASHBOARD_MARGIN) <= DASHBOARD_SNAP_DISTANCE) left = DASHBOARD_MARGIN;
+    if (Math.abs(top - DASHBOARD_MARGIN) <= DASHBOARD_SNAP_DISTANCE) top = DASHBOARD_MARGIN;
+    if (Math.abs(rightGap - DASHBOARD_MARGIN) <= DASHBOARD_SNAP_DISTANCE) {
+        left = workspaceRect.width - width - DASHBOARD_MARGIN;
+    }
+    if (Math.abs(bottomGap - DASHBOARD_MARGIN) <= DASHBOARD_SNAP_DISTANCE) {
+        top = workspaceRect.height - height - DASHBOARD_MARGIN;
+    }
+
+    if (panel.classList.contains('dock-right') && Math.abs(rightGap - DASHBOARD_MARGIN) <= DASHBOARD_SNAP_DISTANCE * 1.5) {
+        left = workspaceRect.width - width - DASHBOARD_MARGIN;
+    }
+    if (panel.classList.contains('dock-bottom') && Math.abs(bottomGap - DASHBOARD_MARGIN) <= DASHBOARD_SNAP_DISTANCE * 1.5) {
+        top = workspaceRect.height - height - DASHBOARD_MARGIN;
+    }
+
+    left = roundToGrid(left);
+    top = roundToGrid(top);
+    width = roundToGrid(width);
+    height = roundToGrid(height);
+
+    return clampWindowRect({ left, top, width, height }, panel, workspaceRect);
+}
+
+function getSmartDefaultLayout(panelId, workspaceRect) {
+    const w = workspaceRect.width;
+    const h = workspaceRect.height;
+    const rightWidth = Math.max(392, Math.min(456, Math.round(w * 0.3)));
+    const bottomHeight = Math.max(236, Math.min(292, Math.round(h * 0.3)));
+    const mainWidth = Math.max(520, w - rightWidth - DASHBOARD_MARGIN * 3);
+    const mainHeight = Math.max(360, h - bottomHeight - DASHBOARD_MARGIN * 3);
+    const analysisWidth = Math.max(760, w - DASHBOARD_MARGIN * 2);
+
+    const defaults = {
+        windowThreeUp: { left: DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: mainWidth, height: mainHeight },
+        windowAdjustments: { left: w - rightWidth - DASHBOARD_MARGIN, top: DASHBOARD_MARGIN, width: rightWidth, height: mainHeight },
+        windowAnalysis: { left: DASHBOARD_MARGIN, top: h - bottomHeight - DASHBOARD_MARGIN, width: analysisWidth, height: bottomHeight },
+        windowOrigVsResult: { left: DASHBOARD_MARGIN + 36, top: DASHBOARD_MARGIN + 32, width: Math.min(720, mainWidth - 28), height: Math.min(440, mainHeight - 28) },
+        windowRefVsResult: { left: DASHBOARD_MARGIN + 82, top: DASHBOARD_MARGIN + 78, width: Math.min(720, mainWidth - 18), height: Math.min(440, mainHeight - 18) }
+    };
+
+    return snapWindowRect(defaults[panelId] || {
+        left: parseInt(document.getElementById(panelId)?.dataset.defaultX || '16', 10),
+        top: parseInt(document.getElementById(panelId)?.dataset.defaultY || '16', 10),
+        width: parseInt(document.getElementById(panelId)?.dataset.defaultW || '620', 10),
+        height: parseInt(document.getElementById(panelId)?.dataset.defaultH || '400', 10)
+    }, document.getElementById(panelId), workspaceRect);
+}
+
+function getPresetLayout(layoutName, workspaceRect) {
+    const w = workspaceRect.width;
+    const h = workspaceRect.height;
+    const defaults = {
+        edit: {
+            windowThreeUp: { left: 16, top: 16, width: w - 500, height: h - 32 },
+            windowAdjustments: { left: w - 468, top: 16, width: 452, height: h - 32 },
+            windowAnalysis: { left: 16, top: h - 250, width: Math.max(640, w - 500), height: 234 },
+            windowOrigVsResult: { left: 64, top: 64, width: 620, height: 390 },
+            windowRefVsResult: { left: 116, top: 112, width: 620, height: 390 }
+        },
+        compare: {
+            windowThreeUp: { left: 16, top: 16, width: Math.max(500, w * 0.46), height: Math.max(320, h * 0.52) },
+            windowOrigVsResult: { left: w * 0.48, top: 16, width: Math.max(360, w * 0.25), height: Math.max(320, h * 0.52) },
+            windowRefVsResult: { left: w * 0.74, top: 16, width: Math.max(320, w * 0.24 - 16), height: Math.max(320, h * 0.52) },
+            windowAnalysis: { left: 16, top: h - 270, width: w - 32, height: 254 },
+            windowAdjustments: { left: 16, top: h * 0.56, width: Math.max(420, w * 0.34), height: Math.max(210, h * 0.14) }
+        },
+        analysis: {
+            windowThreeUp: { left: 16, top: 16, width: Math.max(460, w * 0.44), height: Math.max(320, h * 0.46) },
+            windowAdjustments: { left: w * 0.46, top: 16, width: Math.max(360, w * 0.22), height: Math.max(320, h * 0.46) },
+            windowOrigVsResult: { left: w * 0.70, top: 16, width: Math.max(300, w * 0.28 - 16), height: Math.max(220, h * 0.28) },
+            windowRefVsResult: { left: w * 0.70, top: h * 0.30, width: Math.max(300, w * 0.28 - 16), height: Math.max(220, h * 0.18) },
+            windowAnalysis: { left: 16, top: h * 0.50, width: w - 32, height: Math.max(300, h * 0.46) }
+        }
+    };
+    return defaults[layoutName] || defaults.edit;
+}
+
+function applyWorkspacePreset(layoutName) {
+    if (!dashboardWorkspace || window.innerWidth <= 980) return;
+    const workspaceRect = getWorkspaceRect();
+    const preset = getPresetLayout(layoutName, workspaceRect);
+    document.querySelectorAll('.dashboard-window').forEach((panel, index) => {
+        const raw = preset[panel.id] || getSmartDefaultLayout(panel.id, workspaceRect);
+        const snapped = snapWindowRect(raw, panel, workspaceRect);
+        panel.classList.add('active');
+        applyRectToPanel(panel, snapped);
+        panel.style.zIndex = String(index + 1);
+    });
+    if (layoutName === 'edit') {
+        document.getElementById('windowOrigVsResult')?.classList.remove('active');
+        document.getElementById('windowRefVsResult')?.classList.remove('active');
+    }
+    if (layoutName === 'compare') {
+        document.getElementById('windowAnalysis')?.classList.add('active');
+    }
+    if (layoutName === 'analysis') {
+        document.getElementById('windowAnalysis')?.classList.add('active');
+    }
+    saveDashboardLayouts();
+    updateComparisonViews();
+    updateWindowDensityClasses();
+}
+
+function showSnapPreview(rect) {
+    if (!snapPreview || !rect) return;
+    snapPreview.style.display = 'block';
+    snapPreview.style.left = `${rect.left}px`;
+    snapPreview.style.top = `${rect.top}px`;
+    snapPreview.style.width = `${rect.width}px`;
+    snapPreview.style.height = `${rect.height}px`;
+}
+
+function hideSnapPreview() {
+    if (!snapPreview) return;
+    snapPreview.style.display = 'none';
+}
+
+function updateWindowDensityClasses() {
+    document.querySelectorAll('.dashboard-window').forEach((panel) => {
+        const width = panel.offsetWidth || parseInt(panel.style.width || '0', 10);
+        panel.classList.toggle('compact', width > 0 && width < 430);
+        panel.classList.toggle('expanded', width >= 720);
+    });
+}
+
+function saveDashboardLayouts() {
+    if (!dashboardWorkspace || window.innerWidth <= 980) return;
+    const layouts = {};
+    document.querySelectorAll('.dashboard-window').forEach((panel) => {
+        layouts[panel.id] = {
+            left: panel.style.left,
+            top: panel.style.top,
+            width: panel.style.width,
+            height: panel.style.height,
+            active: panel.classList.contains('active'),
+            zIndex: panel.style.zIndex || '1'
+        };
+    });
+    writeJsonStorage(DASHBOARD_LAYOUT_KEY, layouts);
+}
+
+function bringWindowToFront(panel) {
+    const panels = Array.from(document.querySelectorAll('.dashboard-window'));
+    const maxZ = panels.reduce((max, node) => Math.max(max, parseInt(node.style.zIndex || '1', 10)), 1);
+    panel.style.zIndex = String(maxZ + 1);
+}
+
+function resetDashboardLayout() {
+    localStorage.removeItem(DASHBOARD_LAYOUT_KEY);
+    initializeDashboardWindows(true);
+}
+
+function initializeDashboardWindows(forceReset = false) {
+    if (!dashboardWorkspace) return;
+    const isMobile = window.innerWidth <= 980;
+    const stored = forceReset ? {} : getDashboardLayouts();
+    const workspaceRect = getWorkspaceRect();
+    document.querySelectorAll('.dashboard-window').forEach((panel, index) => {
+        panel.classList.add('active');
+        if (isMobile) {
+            panel.style.left = '';
+            panel.style.top = '';
+            panel.style.width = '';
+            panel.style.height = '';
+            panel.style.zIndex = '';
+            return;
+        }
+        const layout = stored[panel.id] || {};
+        const defaultLayout = getSmartDefaultLayout(panel.id, workspaceRect);
+        const resolved = clampWindowRect({
+            left: parseInt(layout.left || `${defaultLayout.left}`, 10),
+            top: parseInt(layout.top || `${defaultLayout.top}`, 10),
+            width: parseInt(layout.width || `${defaultLayout.width}`, 10),
+            height: parseInt(layout.height || `${defaultLayout.height}`, 10)
+        }, panel, workspaceRect);
+        applyRectToPanel(panel, resolved);
+        panel.style.zIndex = layout.zIndex || String(index + 1);
+        if (layout.active === false && panel.id !== 'windowThreeUp') {
+            panel.classList.remove('active');
+        }
+        if (panel.dataset.focusBound !== 'true') {
+            panel.dataset.focusBound = 'true';
+            panel.addEventListener('mousedown', () => bringWindowToFront(panel));
+        }
+    });
+    const toggles = document.getElementById('resultWindowToggles');
+    toggles?.querySelectorAll('.window-toggle').forEach((btn) => {
+        if (!btn.dataset.window) return;
+        const targetPanel = document.getElementById(btn.dataset.window);
+        btn.classList.toggle('active', !!targetPanel?.classList.contains('active'));
+    });
+    updateWindowDensityClasses();
+    saveDashboardLayouts();
+}
+
+function setupDashboardWindowInteractions() {
+    if (!dashboardWorkspace || dashboardWorkspace.dataset.bound === 'true') return;
+    dashboardWorkspace.dataset.bound = 'true';
+    initializeDashboardWindows();
+    updateWindowDensityClasses();
+    hideSnapPreview();
+    document.getElementById('resetWindowLayoutBtn')?.addEventListener('click', resetDashboardLayout);
+
+    let dragState = null;
+    const startDrag = (event) => {
+        if (window.innerWidth <= 980) return;
+        const bar = event.target.closest('.dashboard-window-bar');
+        if (!bar) return;
+        const panel = bar.closest('.dashboard-window');
+        if (!panel) return;
+        bringWindowToFront(panel);
+        const rect = panel.getBoundingClientRect();
+        const workspaceRect = dashboardWorkspace.getBoundingClientRect();
+        dragState = {
+            panel,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            workspaceRect,
+            slotName: getPreferredSlot(panel.id),
+            slotRect: null
+        };
+        panel.classList.add('dragging');
+    };
+
+    const moveDrag = (event) => {
+        if (!dragState) return;
+        const { panel, workspaceRect } = dragState;
+        const slot = findClosestSlot(panel, workspaceRect, event.clientX, event.clientY);
+        dragState.slotName = slot.name;
+        dragState.slotRect = slot.rect;
+        showSnapPreview(slot.rect);
+        applyRectToPanel(panel, slot.rect);
+    };
+
+    const stopDrag = () => {
+        if (!dragState) return;
+        dragState.panel.classList.remove('dragging');
+        if (dragState.slotName) savePreferredSlot(dragState.panel.id, dragState.slotName);
+        if (dragState.slotRect) applyRectToPanel(dragState.panel, dragState.slotRect);
+        hideSnapPreview();
+        dragState = null;
+        saveDashboardLayouts();
+        updateWindowDensityClasses();
+    };
+
+    dashboardWorkspace.addEventListener('mousedown', startDrag);
+    window.addEventListener('mousemove', moveDrag);
+    window.addEventListener('mouseup', stopDrag);
+
+    if ('ResizeObserver' in window) {
+        const observer = new ResizeObserver(() => {
+            const workspaceRect = getWorkspaceRect();
+            document.querySelectorAll('.dashboard-window.active').forEach((panel) => {
+                const snapped = snapWindowRect({
+                    left: parseInt(panel.style.left || '0', 10),
+                    top: parseInt(panel.style.top || '0', 10),
+                    width: parseInt(panel.style.width || `${panel.offsetWidth}`, 10),
+                    height: parseInt(panel.style.height || `${panel.offsetHeight}`, 10)
+                }, panel, workspaceRect);
+                applyRectToPanel(panel, snapped);
+            });
+            saveDashboardLayouts();
+            updateComparisonViews();
+            updateWindowDensityClasses();
+        });
+        document.querySelectorAll('.dashboard-window').forEach((panel) => observer.observe(panel));
+    }
+
+    window.addEventListener('resize', () => initializeDashboardWindows());
 }
 
 function setActiveToolLayer(layerId) {
@@ -224,6 +678,10 @@ function setupDashboardInteractions() {
         resultWindowToggles.addEventListener('click', (event) => {
             const button = event.target.closest('.window-toggle');
             if (!button) return;
+            if (button.dataset.layoutPreset) {
+                applyWorkspacePreset(button.dataset.layoutPreset);
+                return;
+            }
             setActiveDashboardWindow(button.dataset.window);
         });
     }
@@ -260,6 +718,25 @@ function setupDashboardInteractions() {
             );
         });
     }
+
+    [
+        [sourceImg, 'Source Image'],
+        [targetImg, 'Reference Image']
+    ].forEach(([imgEl, title]) => {
+        imgEl?.addEventListener('click', () => {
+            if (imgEl.src) openImagePreview(imgEl.src, { title });
+        });
+    });
+
+    [
+        [originalCanvas, 'Original Preview'],
+        [referenceCanvas, 'Reference Preview'],
+        [resultCanvas, 'Result Preview']
+    ].forEach(([canvas, title]) => {
+        canvas?.addEventListener('click', () => {
+            if (canvas.width) openImagePreview(canvas.toDataURL('image/png'), { title });
+        });
+    });
 }
 
 function getTransferOptions() {
@@ -272,9 +749,9 @@ function getTransferOptions() {
 
 function getProcessingMaxSize() {
     const mode = performanceMode ? performanceMode.value : 'balanced';
-    if (mode === 'fast') return 1440;
-    if (mode === 'quality') return 2800;
-    return 2048;
+    if (mode === 'fast') return 1280;
+    if (mode === 'quality') return 2400;
+    return 1800;
 }
 
 function handleImageUpload(event, type) {
@@ -317,6 +794,7 @@ function handleImageUpload(event, type) {
 }
 
 function removeImage(type) {
+    closeImagePreview();
     if (uploadSection) {
         uploadSection.style.display = 'block';
     }
@@ -533,6 +1011,7 @@ function resizeImage(img, maxSize) {
 }
 
 function displayResults(sourceData, targetData, result) {
+    adjustmentPreviewBaseImageData = null;
     originalResultData = result.imageData;
     currentAdjustedResultData = result.imageData;
     imageAdjustments.setOriginalImageData(result.imageData);
@@ -546,7 +1025,7 @@ function displayResults(sourceData, targetData, result) {
 
     adjustmentsSection.style.display = 'block';
 
-    setActiveDashboardWindow('windowThreeUp');
+    setActiveDashboardWindow('windowThreeUp', { forceVisible: true });
     setActiveToolLayer('layerTransfer');
 
     if (uploadSection) {
@@ -568,7 +1047,7 @@ function updateComparisonViews() {
     const compareReferenceResultTop = document.getElementById('compareReferenceResultTop');
     const compareReferenceResultSlider = document.getElementById('compareReferenceResultSlider');
 
-    if (compareOriginalResultSlider && compareOriginalResultBottom) {
+    if (document.getElementById('windowOrigVsResult')?.classList.contains('active') && compareOriginalResultSlider && compareOriginalResultBottom) {
         redrawComparison(
             compareOriginalResultBottom,
             compareOriginalResultTop,
@@ -578,7 +1057,7 @@ function updateComparisonViews() {
         );
     }
 
-    if (compareReferenceResultSlider && compareReferenceResultBottom) {
+    if (document.getElementById('windowRefVsResult')?.classList.contains('active') && compareReferenceResultSlider && compareReferenceResultBottom) {
         redrawComparison(
             compareReferenceResultBottom,
             compareReferenceResultTop,
@@ -605,21 +1084,31 @@ function redrawComparison(bottomCanvas, topCanvas, leftCanvas, rightCanvas, spli
     bottomCtx.clearRect(0, 0, width, height);
     topCtx.clearRect(0, 0, width, height);
 
-    bottomCtx.drawImage(leftCanvas, 0, 0, width, height);
-    topCtx.drawImage(rightCanvas, 0, 0, width, height);
+    const drawContained = (ctx, sourceCanvas) => {
+        const scale = Math.min(width / sourceCanvas.width, height / sourceCanvas.height);
+        const drawW = Math.max(1, Math.round(sourceCanvas.width * scale));
+        const drawH = Math.max(1, Math.round(sourceCanvas.height * scale));
+        const dx = Math.round((width - drawW) / 2);
+        const dy = Math.round((height - drawH) / 2);
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg-tertiary') || '#f4f4f5';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(sourceCanvas, dx, dy, drawW, drawH);
+    };
+
+    drawContained(bottomCtx, leftCanvas);
+    drawContained(topCtx, rightCanvas);
 
     topCanvas.style.clipPath = `inset(0 0 0 ${splitPercent}%)`;
 }
 
 function displayImageData(canvas, imageData) {
-    const MAX_DISPLAY = 1200;
-    let w = imageData.width;
-    let h = imageData.height;
-    if (w > MAX_DISPLAY || h > MAX_DISPLAY) {
-        const scale = MAX_DISPLAY / Math.max(w, h);
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
-    }
+    const displayMode = performanceMode ? performanceMode.value : 'balanced';
+    const MAX_DISPLAY = displayMode === 'fast' ? 960 : displayMode === 'quality' ? 1320 : 1120;
+    const panel = canvas.closest('.result-item, .comparison-stage');
+    const targetWidth = Math.max(240, Math.min(MAX_DISPLAY, Math.round(panel?.clientWidth || imageData.width)));
+    const targetHeight = Math.max(180, Math.min(420, Math.round((panel?.clientHeight || targetWidth * 0.66) - 24)));
+    let w = targetWidth;
+    let h = targetHeight;
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
@@ -627,7 +1116,14 @@ function displayImageData(canvas, imageData) {
     displayScratchCanvas.height = imageData.height;
     displayScratchCanvas.getContext('2d').putImageData(imageData, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(displayScratchCanvas, 0, 0, w, h);
+    const scale = Math.min(w / imageData.width, h / imageData.height);
+    const drawW = Math.max(1, Math.round(imageData.width * scale));
+    const drawH = Math.max(1, Math.round(imageData.height * scale));
+    const dx = Math.round((w - drawW) / 2);
+    const dy = Math.round((h - drawH) / 2);
+    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg-tertiary') || '#f4f4f5';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(displayScratchCanvas, dx, dy, drawW, drawH);
 }
 
 function hideResults() {
@@ -640,12 +1136,15 @@ function hideResults() {
     currentAdjustedResultData = null;
     cachedSourceImageData = null;
     cachedTargetImageData = null;
+    adjustmentPreviewBaseImageData = null;
     if (adjustmentFrame) cancelAnimationFrame(adjustmentFrame);
     if (analysisFrame) cancelAnimationFrame(analysisFrame);
     clearTimeout(analysisUpdateTimer);
     clearTimeout(strengthDebounceTimer);
+    clearTimeout(interactiveAdjustTimer);
     adjustmentFrame = null;
     analysisFrame = null;
+    isInteractiveAdjusting = false;
     imageAdjustments.resetAdjustments();
 }
 
@@ -796,30 +1295,370 @@ function updateAdjustment(adjustmentType, value) {
     imageAdjustments.updateAdjustments({ [adjustmentType]: numValue });
 
     if (originalResultData) {
+        markInteractiveAdjustment();
         scheduleAdjustmentPreview();
     }
 }
 
-function applyAdjustmentsRealTime() {
+function updateWheelAdjustment(wheelType, value) {
+    const numeric = parseInt(value, 10);
+    const valueEl = document.getElementById(`${wheelType}WheelAmountValue`);
+    if (valueEl) valueEl.textContent = numeric;
+    imageAdjustments.updateAdjustments({ [`${wheelType}WheelAmount`]: numeric });
+    if (originalResultData) {
+        markInteractiveAdjustment();
+        scheduleAdjustmentPreview();
+    }
+}
+
+function updateWheelColor(wheelType) {
+    const colorEl = document.getElementById(`${wheelType}WheelColor`);
+    imageAdjustments.updateAdjustments({ [`${wheelType}WheelColor`]: colorEl?.value || '#ffffff' });
+    drawColorWheel(wheelType);
+    if (originalResultData) {
+        markInteractiveAdjustment();
+        scheduleAdjustmentPreview();
+    }
+}
+
+function hexToHsv(hex) {
+    const safe = (hex || '#ffffff').replace('#', '');
+    const expanded = safe.length === 3 ? safe.split('').map((char) => char + char).join('') : safe;
+    const num = parseInt(expanded, 16);
+    let r = ((num >> 16) & 255) / 255;
+    let g = ((num >> 8) & 255) / 255;
+    let b = (num & 255) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    const s = max === 0 ? 0 : d / max;
+    const v = max;
+    if (d !== 0) {
+        switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+            case g: h = ((b - r) / d + 2) / 6; break;
+            default: h = ((r - g) / d + 4) / 6; break;
+        }
+    }
+    return { h, s, v };
+}
+
+function hsvToHex(h, s, v) {
+    const i = Math.floor(h * 6);
+    const f = h * 6 - i;
+    const p = v * (1 - s);
+    const q = v * (1 - f * s);
+    const t = v * (1 - (1 - f) * s);
+    let r = 0; let g = 0; let b = 0;
+    switch (i % 6) {
+        case 0: r = v; g = t; b = p; break;
+        case 1: r = q; g = v; b = p; break;
+        case 2: r = p; g = v; b = t; break;
+        case 3: r = p; g = q; b = v; break;
+        case 4: r = t; g = p; b = v; break;
+        default: r = v; g = p; b = q; break;
+    }
+    return `#${[r, g, b].map((channel) => Math.round(channel * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function getWheelCanvas(wheelType) {
+    return {
+        shadow: shadowWheelCanvas,
+        midtone: midtoneWheelCanvas,
+        highlight: highlightWheelCanvas
+    }[wheelType];
+}
+
+function drawColorWheel(wheelType) {
+    const canvas = getWheelCanvas(wheelType);
+    const colorEl = document.getElementById(`${wheelType}WheelColor`);
+    if (!canvas || !colorEl) return;
+
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.min(width, height) / 2 - 6;
+    const image = ctx.createImageData(width, height);
+    const data = image.data;
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const idx = (y * width + x) * 4;
+            if (dist > radius) {
+                data[idx + 3] = 0;
+                continue;
+            }
+            const hue = ((Math.atan2(dy, dx) / (Math.PI * 2)) + 1) % 1;
+            const sat = Math.min(1, dist / radius);
+            const hex = hsvToHex(hue, sat, 1);
+            data[idx] = parseInt(hex.slice(1, 3), 16);
+            data[idx + 1] = parseInt(hex.slice(3, 5), 16);
+            data[idx + 2] = parseInt(hex.slice(5, 7), 16);
+            data[idx + 3] = 255;
+        }
+    }
+    ctx.putImageData(image, 0, 0);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius + 0.5, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const { h, s } = hexToHsv(colorEl.value);
+    const angle = h * Math.PI * 2;
+    const handleRadius = Math.max(0, Math.min(radius, s * radius));
+    const handleX = centerX + Math.cos(angle) * handleRadius;
+    const handleY = centerY + Math.sin(angle) * handleRadius;
+    ctx.beginPath();
+    ctx.arc(handleX, handleY, 7, 0, Math.PI * 2);
+    ctx.fillStyle = colorEl.value;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+    ctx.restore();
+}
+
+function setWheelColorFromPoint(wheelType, clientX, clientY) {
+    const canvas = getWheelCanvas(wheelType);
+    const colorEl = document.getElementById(`${wheelType}WheelColor`);
+    if (!canvas || !colorEl) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * canvas.width;
+    const y = ((clientY - rect.top) / rect.height) * canvas.height;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+    const radius = Math.min(canvas.width, canvas.height) / 2 - 6;
+    const distance = Math.min(radius, Math.sqrt(dx * dx + dy * dy));
+    const hue = ((Math.atan2(dy, dx) / (Math.PI * 2)) + 1) % 1;
+    const sat = Math.min(1, distance / radius);
+    colorEl.value = hsvToHex(hue, sat, 1);
+    updateWheelColor(wheelType);
+}
+
+function setupColorWheels() {
+    const wheelTypes = ['shadow', 'midtone', 'highlight'];
+    let activeWheel = null;
+
+    wheelTypes.forEach((wheelType) => {
+        drawColorWheel(wheelType);
+        const canvas = getWheelCanvas(wheelType);
+        canvas?.addEventListener('mousedown', (event) => {
+            activeWheel = wheelType;
+            setWheelColorFromPoint(wheelType, event.clientX, event.clientY);
+        });
+    });
+
+    window.addEventListener('mousemove', (event) => {
+        if (!activeWheel) return;
+        setWheelColorFromPoint(activeWheel, event.clientX, event.clientY);
+    });
+
+    window.addEventListener('mouseup', () => {
+        activeWheel = null;
+    });
+
+    document.querySelectorAll('[data-wheel-reset]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const wheelType = button.dataset.wheelReset;
+            const colorEl = document.getElementById(`${wheelType}WheelColor`);
+            if (colorEl) colorEl.value = wheelDefaults[wheelType];
+            const amountEl = document.getElementById(`${wheelType}WheelAmount`);
+            const amountValueEl = document.getElementById(`${wheelType}WheelAmountValue`);
+            if (amountEl) amountEl.value = 0;
+            if (amountValueEl) amountValueEl.textContent = '0';
+            imageAdjustments.updateAdjustments({
+                [`${wheelType}WheelAmount`]: 0,
+                [`${wheelType}WheelColor`]: wheelDefaults[wheelType]
+            });
+            drawColorWheel(wheelType);
+            if (originalResultData) scheduleAdjustmentPreview();
+        });
+    });
+}
+
+function drawCurvesEditor() {
+    if (!curvesCanvas) return;
+    const ctx = curvesCanvas.getContext('2d');
+    const width = curvesCanvas.width;
+    const height = curvesCanvas.height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.strokeStyle = 'rgba(127,127,127,0.4)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+        const x = (width / 4) * i;
+        const y = (height / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(200,200,200,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(0, height);
+    ctx.lineTo(width, 0);
+    ctx.stroke();
+
+    const points = imageAdjustments.getCurvePoints();
+    ctx.strokeStyle = '#6f86ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let step = 0; step <= 128; step++) {
+        const xNorm = step / 128;
+        const yNorm = imageAdjustments.applyCurveValue(xNorm);
+        const x = xNorm * width;
+        const y = height - yNorm * height;
+        if (step === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    points.forEach((point, index) => {
+        const x = point.x * width;
+        const y = height - point.y * height;
+        ctx.fillStyle = index === 0 || index === points.length - 1 ? '#9aa4b8' : '#6f86ff';
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+    });
+}
+
+function getCurvePointAt(clientX, clientY) {
+    if (!curvesCanvas) return -1;
+    const rect = curvesCanvas.getBoundingClientRect();
+    const x = (clientX - rect.left) / rect.width;
+    const y = 1 - ((clientY - rect.top) / rect.height);
+    const points = imageAdjustments.getCurvePoints();
+    return points.findIndex((point, index) => (
+        Math.abs(point.x - x) < 0.05 && Math.abs(point.y - y) < 0.07 && index > 0 && index < points.length - 1
+    ));
+}
+
+function setupCurvesEditor() {
+    if (!curvesCanvas || curvesCanvas.dataset.bound === 'true') return;
+    curvesCanvas.dataset.bound = 'true';
+    drawCurvesEditor();
+    let dragIndex = -1;
+    curvesCanvas.addEventListener('mousedown', (event) => {
+        dragIndex = getCurvePointAt(event.clientX, event.clientY);
+        if (dragIndex >= 0) return;
+        const rect = curvesCanvas.getBoundingClientRect();
+        const x = Math.max(0.05, Math.min(0.95, (event.clientX - rect.left) / rect.width));
+        const y = Math.max(0.02, Math.min(0.98, 1 - ((event.clientY - rect.top) / rect.height)));
+        dragIndex = imageAdjustments.addCurvePoint(x, y);
+        drawCurvesEditor();
+        if (originalResultData) scheduleAdjustmentPreview();
+    });
+    window.addEventListener('mousemove', (event) => {
+        if (dragIndex < 0) return;
+        const rect = curvesCanvas.getBoundingClientRect();
+        const x = Math.max(0.08, Math.min(0.92, (event.clientX - rect.left) / rect.width));
+        const y = Math.max(0.02, Math.min(0.98, 1 - ((event.clientY - rect.top) / rect.height)));
+        imageAdjustments.updateCurvePoint(dragIndex, x, y);
+        drawCurvesEditor();
+        if (originalResultData) scheduleAdjustmentPreview();
+    });
+    window.addEventListener('mouseup', () => {
+        dragIndex = -1;
+    });
+    curvesCanvas.addEventListener('dblclick', (event) => {
+        const index = getCurvePointAt(event.clientX, event.clientY);
+        if (index < 0) return;
+        imageAdjustments.removeCurvePoint(index);
+        drawCurvesEditor();
+        if (originalResultData) scheduleAdjustmentPreview();
+    });
+}
+
+function resetCurves() {
+    imageAdjustments.resetCurvePoints();
+    drawCurvesEditor();
+    if (originalResultData) {
+        markInteractiveAdjustment();
+        scheduleAdjustmentPreview();
+    }
+}
+
+function markInteractiveAdjustment() {
+    isInteractiveAdjusting = true;
+    clearTimeout(interactiveAdjustTimer);
+    interactiveAdjustTimer = setTimeout(() => {
+        isInteractiveAdjusting = false;
+        adjustmentPreviewBaseImageData = null;
+        scheduleAdjustmentPreview(true);
+    }, 140);
+}
+
+function getAdjustmentPreviewSource() {
+    if (!originalResultData) return null;
+    if (!isInteractiveAdjusting) return originalResultData;
+    if (adjustmentPreviewBaseImageData) return adjustmentPreviewBaseImageData;
+
+    const mode = performanceMode ? performanceMode.value : 'balanced';
+    const maxSize = mode === 'fast' ? 720 : mode === 'quality' ? 1280 : 960;
+    if (originalResultData.width <= maxSize && originalResultData.height <= maxSize) {
+        adjustmentPreviewBaseImageData = originalResultData;
+        return adjustmentPreviewBaseImageData;
+    }
+
+    const scale = maxSize / Math.max(originalResultData.width, originalResultData.height);
+    const w = Math.max(1, Math.round(originalResultData.width * scale));
+    const h = Math.max(1, Math.round(originalResultData.height * scale));
+    displayScratchCanvas.width = originalResultData.width;
+    displayScratchCanvas.height = originalResultData.height;
+    displayScratchCanvas.getContext('2d').putImageData(originalResultData, 0, 0);
+    analysisScratchCanvas.width = w;
+    analysisScratchCanvas.height = h;
+    const ctx = analysisScratchCanvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(displayScratchCanvas, 0, 0, w, h);
+    adjustmentPreviewBaseImageData = ctx.getImageData(0, 0, w, h);
+    return adjustmentPreviewBaseImageData;
+}
+
+function applyAdjustmentsRealTime(forceFullResolution = false) {
     if (!originalResultData) return;
 
+    const sourceImageData = forceFullResolution ? originalResultData : getAdjustmentPreviewSource();
+    const originalBase = imageAdjustments.originalImageData;
+    if (sourceImageData && sourceImageData !== originalBase) {
+        imageAdjustments.setOriginalImageData(sourceImageData);
+    }
     const adjustedImageData = imageAdjustments.applyAllAdjustments();
+    if (originalBase && imageAdjustments.originalImageData !== originalBase) {
+        imageAdjustments.setOriginalImageData(originalBase);
+    }
     if (adjustedImageData) {
         currentAdjustedResultData = adjustedImageData;
         displayImageData(resultCanvas, adjustedImageData);
         updateComparisonViews();
-        scheduleAnalysisUpdate();
+        if (!isInteractiveAdjusting || forceFullResolution) {
+            scheduleAnalysisUpdate();
+        }
     }
 }
 
-function scheduleAdjustmentPreview() {
+function scheduleAdjustmentPreview(forceFullResolution = false) {
     if (adjustmentFrame) {
         cancelAnimationFrame(adjustmentFrame);
     }
 
     adjustmentFrame = requestAnimationFrame(() => {
         adjustmentFrame = null;
-        applyAdjustmentsRealTime();
+        applyAdjustmentsRealTime(forceFullResolution);
     });
 }
 
@@ -847,7 +1686,8 @@ function scheduleAnalysisUpdate() {
 function updateLiveAnalysis() {
     if (!currentAdjustedResultData || !colorAnalysis.cachedRefAnalysis) return;
 
-    const maxSize = 400;
+    const mode = performanceMode ? performanceMode.value : 'balanced';
+    const maxSize = mode === 'fast' ? 280 : mode === 'quality' ? 460 : 360;
     let imageData = currentAdjustedResultData;
 
     if (currentAdjustedResultData.width > maxSize || currentAdjustedResultData.height > maxSize) {
@@ -898,6 +1738,19 @@ function resetAdjustments() {
     blacksValue.textContent = '0';
     saturationValue.textContent = '0';
     strengthValue.textContent = '100';
+    if (shadowWheelAmount) shadowWheelAmount.value = 0;
+    if (midtoneWheelAmount) midtoneWheelAmount.value = 0;
+    if (highlightWheelAmount) highlightWheelAmount.value = 0;
+    if (shadowWheelAmountValue) shadowWheelAmountValue.textContent = '0';
+    if (midtoneWheelAmountValue) midtoneWheelAmountValue.textContent = '0';
+    if (highlightWheelAmountValue) highlightWheelAmountValue.textContent = '0';
+    if (shadowWheelColor) shadowWheelColor.value = '#3a6cff';
+    if (midtoneWheelColor) midtoneWheelColor.value = '#ffffff';
+    if (highlightWheelColor) highlightWheelColor.value = '#ffb347';
+    resetCurves();
+    drawColorWheel('shadow');
+    drawColorWheel('midtone');
+    drawColorWheel('highlight');
 
     if (cachedSourceImageData) {
         reapplyTransfer();
@@ -1072,12 +1925,25 @@ async function doRefPopupSearch() {
             </div>
         `).join('');
         grid.querySelectorAll('.reference-result-card').forEach(card => {
-            card.addEventListener('click', () => loadRefPopupImage(card));
+            card.addEventListener('click', () => openReferenceResultPreview(card));
         });
     } catch (e) {
         console.error('Search error:', e);
         grid.innerHTML = '<div class="error-message">Search failed. Check the browser console for details.</div>';
     }
+}
+
+function openReferenceResultPreview(card) {
+    const url = card.dataset.url;
+    const title = card.querySelector('img')?.alt || 'Reference Preview';
+    openImagePreview(url, {
+        title,
+        actionLabel: 'Use as Reference',
+        onAction: () => {
+            loadRefPopupImage(card);
+            closeImagePreview();
+        }
+    });
 }
 
 function loadRefPopupImage(card) {
@@ -1747,6 +2613,7 @@ function exposeUiActions() {
         exportLUT,
         openSettings,
         closeSettings,
+        closeImagePreview,
         toggleTheme
     });
 }
@@ -1755,7 +2622,8 @@ function setupModalDismissals() {
     document.querySelectorAll('.modal-overlay').forEach((overlay) => {
         overlay.addEventListener('click', (event) => {
             if (event.target === overlay) {
-                overlay.style.display = 'none';
+                if (overlay.id === 'imagePreviewModal') closeImagePreview();
+                else overlay.style.display = 'none';
             }
         });
     });
@@ -1796,17 +2664,18 @@ function initPresetPanel() {
             <input type="text" id="presetSearchInput" placeholder="Search presets..." />
         </div>
         <div class="preset-list" id="presetList">
-            ${presets.map(p => `
-                <div class="preset-card" data-preset-id="${p.id}">
-                    <div class="preset-name">${p.name}</div>
-                    <div class="preset-tags">${(p.tags || []).join(', ')}</div>
-                </div>
-            `).join('')}
+            ${renderPresetCardsMarkup(presets)}
+        </div>
+        <div class="preset-save-form">
+            <input type="text" id="presetNameInput" placeholder="Preset name" />
+            <input type="text" id="presetTagsInput" placeholder="Tags (comma separated)" value="custom" />
         </div>
         <div class="preset-actions">
             <button class="preset-action-btn" id="saveCurrentAsPreset">Save Current</button>
+            <button class="preset-action-btn" id="importPresetsBtn">Import</button>
             <button class="preset-action-btn" id="exportPresetsBtn">Export All</button>
         </div>
+        <input type="file" id="presetImportInput" accept=".json" hidden />
     `;
 
     document.getElementById('closePresetPanel')?.addEventListener('click', togglePresetPanel);
@@ -1816,34 +2685,60 @@ function initPresetPanel() {
         const filtered = presetManager.searchPresets(query);
         renderPresetList(filtered);
     });
-
-    document.querySelectorAll('.preset-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const presetId = card.dataset.presetId;
-            loadPreset(presetId);
-        });
-    });
-
+    bindPresetPanelActions();
     document.getElementById('saveCurrentAsPreset')?.addEventListener('click', saveCurrentAsPreset);
+    document.getElementById('importPresetsBtn')?.addEventListener('click', () => document.getElementById('presetImportInput')?.click());
     document.getElementById('exportPresetsBtn')?.addEventListener('click', exportAllPresets);
+    document.getElementById('presetImportInput')?.addEventListener('change', importPresetFile);
 }
 
 function renderPresetList(presets) {
     const list = document.getElementById('presetList');
     if (!list) return;
 
-    list.innerHTML = presets.map(p => `
-        <div class="preset-card" data-preset-id="${p.id}">
+    list.innerHTML = renderPresetCardsMarkup(presets);
+    bindPresetPanelActions();
+}
+
+function renderPresetCardsMarkup(presets) {
+    const activePresetId = getReferenceMemory().selectedPresetId;
+    return presets.map(p => `
+        <div class="preset-card ${activePresetId === p.id ? 'active' : ''}" data-preset-id="${p.id}">
             <div class="preset-name">${p.name}</div>
             <div class="preset-tags">${(p.tags || []).join(', ')}</div>
+            <div class="preset-meta">
+                <span class="preset-badge">${p.builtIn ? 'Built-in' : 'Saved'}</span>
+                <div class="preset-inline-actions">
+                    <button type="button" data-action="apply" data-preset-id="${p.id}">Apply</button>
+                    <button type="button" data-action="duplicate" data-preset-id="${p.id}">Duplicate</button>
+                    ${p.builtIn ? '' : `<button type="button" data-action="delete" data-preset-id="${p.id}">Delete</button>`}
+                </div>
+            </div>
         </div>
     `).join('');
+}
 
-    list.querySelectorAll('.preset-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const presetId = card.dataset.presetId;
-            loadPreset(presetId);
-        });
+function bindPresetPanelActions() {
+    document.querySelectorAll('.preset-inline-actions button').forEach((button) => {
+        button.onclick = (event) => {
+            event.stopPropagation();
+            const presetId = button.dataset.presetId;
+            const action = button.dataset.action;
+            if (action === 'apply') loadPreset(presetId);
+            if (action === 'duplicate') {
+                presetManager.duplicatePreset(presetId);
+                initPresetPanel();
+                showStatus('Preset duplicated.', 'success');
+            }
+            if (action === 'delete') {
+                presetManager.deletePreset(presetId);
+                initPresetPanel();
+                showStatus('Preset deleted.', 'success');
+            }
+        };
+    });
+    document.querySelectorAll('.preset-card').forEach((card) => {
+        card.onclick = () => loadPreset(card.dataset.presetId);
     });
 }
 
@@ -1863,6 +2758,9 @@ function loadPreset(presetId) {
         });
         applyPresetAdjustments(preset.adjustments);
         showStatus(`Preset "${preset.name}" loaded!`, 'success');
+        if (document.getElementById('presetPanel')?.style.display !== 'none') {
+            initPresetPanel();
+        }
     } else {
         showStatus('Preset has no adjustment data.', 'error');
     }
@@ -1912,15 +2810,50 @@ function applyPresetAdjustments(adj) {
     if (adj.method !== undefined) {
         algorithmMethod.value = adj.method;
     }
+    if (adj.shadowWheelAmount !== undefined && shadowWheelAmount) {
+        shadowWheelAmount.value = adj.shadowWheelAmount;
+        shadowWheelAmountValue.textContent = adj.shadowWheelAmount;
+    }
+    if (adj.midtoneWheelAmount !== undefined && midtoneWheelAmount) {
+        midtoneWheelAmount.value = adj.midtoneWheelAmount;
+        midtoneWheelAmountValue.textContent = adj.midtoneWheelAmount;
+    }
+    if (adj.highlightWheelAmount !== undefined && highlightWheelAmount) {
+        highlightWheelAmount.value = adj.highlightWheelAmount;
+        highlightWheelAmountValue.textContent = adj.highlightWheelAmount;
+    }
+    if (adj.shadowWheelColor && shadowWheelColor) shadowWheelColor.value = adj.shadowWheelColor;
+    if (adj.midtoneWheelColor && midtoneWheelColor) midtoneWheelColor.value = adj.midtoneWheelColor;
+    if (adj.highlightWheelColor && highlightWheelColor) highlightWheelColor.value = adj.highlightWheelColor;
+    if (adj.curvePoints) {
+        imageAdjustments.setCurvePoints(adj.curvePoints);
+    } else {
+        imageAdjustments.resetCurvePoints();
+    }
+    imageAdjustments.updateAdjustments({
+        shadowWheelAmount: parseInt(shadowWheelAmount?.value || '0', 10),
+        midtoneWheelAmount: parseInt(midtoneWheelAmount?.value || '0', 10),
+        highlightWheelAmount: parseInt(highlightWheelAmount?.value || '0', 10),
+        shadowWheelColor: shadowWheelColor?.value || '#3a6cff',
+        midtoneWheelColor: midtoneWheelColor?.value || '#ffffff',
+        highlightWheelColor: highlightWheelColor?.value || '#ffb347'
+    });
+    drawColorWheel('shadow');
+    drawColorWheel('midtone');
+    drawColorWheel('highlight');
+    drawCurvesEditor();
 
     reapplyTransfer();
 }
 
 function saveCurrentAsPreset() {
-    const name = prompt('Enter preset name:');
-    if (!name) return;
+    const name = document.getElementById('presetNameInput')?.value?.trim();
+    if (!name) {
+        showError('Enter a preset name first.');
+        return;
+    }
 
-    const tags = prompt('Enter tags (comma separated):', 'custom') || 'custom';
+    const tags = document.getElementById('presetTagsInput')?.value?.trim() || 'custom';
 
     const adjustments = {
         temperature: parseInt(temperatureSlider.value),
@@ -1933,7 +2866,14 @@ function saveCurrentAsPreset() {
         blacks: parseInt(blacksSlider.value),
         exposure: parseInt(exposureSlider.value),
         strength: parseInt(strengthSlider.value),
-        method: algorithmMethod.value
+        method: algorithmMethod.value,
+        shadowWheelAmount: parseInt(shadowWheelAmount?.value || '0', 10),
+        midtoneWheelAmount: parseInt(midtoneWheelAmount?.value || '0', 10),
+        highlightWheelAmount: parseInt(highlightWheelAmount?.value || '0', 10),
+        shadowWheelColor: shadowWheelColor?.value || '#3a6cff',
+        midtoneWheelColor: midtoneWheelColor?.value || '#ffffff',
+        highlightWheelColor: highlightWheelColor?.value || '#ffb347',
+        curvePoints: imageAdjustments.getCurvePoints()
     };
 
     const preset = presetManager.savePreset({
@@ -1946,7 +2886,33 @@ function saveCurrentAsPreset() {
 
     updateReferenceMemory({ selectedPresetId: preset.id });
     showStatus(`Preset "${name}" saved!`, 'success');
+    const nameInput = document.getElementById('presetNameInput');
+    if (nameInput) nameInput.value = '';
     initPresetPanel();
+}
+
+function importPresetFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const text = String(reader.result || '');
+            const data = JSON.parse(text);
+            if (Array.isArray(data.presets)) {
+                const count = presetManager.importAllPresets(text);
+                showStatus(`Imported ${count} presets.`, 'success');
+            } else {
+                presetManager.importPreset(text);
+                showStatus('Preset imported.', 'success');
+            }
+            initPresetPanel();
+        } catch (error) {
+            showError(`Preset import failed: ${error.message}`);
+        }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
 }
 
 function exportAllPresets() {
@@ -2033,8 +2999,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupDragAndDrop();
     setupDashboardInteractions();
+    setupDashboardWindowInteractions();
+    setupColorWheels();
+    setupCurvesEditor();
     setupModalDismissals();
-    setActiveDashboardWindow('windowThreeUp');
+    setActiveDashboardWindow('windowThreeUp', { forceVisible: true });
     setActiveToolLayer('layerTransfer');
 
     const settingsBtn = document.getElementById('settingsBtn');

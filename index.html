@@ -36,7 +36,7 @@
                         </div>
                         <div class="image-preview" id="sourcePreview" style="display: none;">
                             <img id="sourceImg" alt="Source image">
-                            <button class="remove-btn" onclick="removeImage('source')">&times;</button>
+                            <button class="remove-btn" onclick="event.stopPropagation(); removeImage('source')">&times;</button>
                         </div>
                     </div>
 
@@ -52,7 +52,7 @@
                         </div>
                         <div class="image-preview" id="targetPreview" style="display: none;">
                             <img id="targetImg" alt="Reference image">
-                            <button class="remove-btn" onclick="removeImage('target')">&times;</button>
+                            <button class="remove-btn" onclick="event.stopPropagation(); removeImage('target')">&times;</button>
                         </div>
                     </div>
                 </div>
@@ -76,166 +76,239 @@
                     <button type="button" class="window-toggle active" data-window="windowThreeUp">Three-Up</button>
                     <button type="button" class="window-toggle" data-window="windowOrigVsResult">Original vs Result</button>
                     <button type="button" class="window-toggle" data-window="windowRefVsResult">Reference vs Result</button>
+                    <button type="button" class="window-toggle active" data-window="windowAdjustments">Adjustments</button>
+                    <button type="button" class="window-toggle active" data-window="windowAnalysis">Analysis</button>
+                    <button type="button" class="window-toggle utility" data-layout-preset="edit">Edit</button>
+                    <button type="button" class="window-toggle utility" data-layout-preset="compare">Compare</button>
+                    <button type="button" class="window-toggle utility" data-layout-preset="analysis">Analysis Heavy</button>
+                    <button type="button" class="window-toggle utility" id="resetWindowLayoutBtn">Reset Layout</button>
                 </div>
 
-                <section class="dashboard-window active" id="windowThreeUp">
-                    <div class="results-container">
-                        <div class="result-item">
-                            <h3>Original</h3>
-                            <canvas id="originalCanvas"></canvas>
-                        </div>
-                        <div class="result-item">
-                            <h3>Reference</h3>
-                            <canvas id="referenceCanvas"></canvas>
-                        </div>
-                        <div class="result-item">
-                            <h3>Result</h3>
-                            <canvas id="resultCanvas"></canvas>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="dashboard-window" id="windowOrigVsResult">
-                    <div class="comparison-card">
-                        <h4>Original vs Result</h4>
-                        <div class="comparison-stage">
-                            <canvas id="compareOriginalResultBottom"></canvas>
-                            <canvas id="compareOriginalResultTop"></canvas>
-                        </div>
-                        <input type="range" id="compareOriginalResultSlider" class="comparison-slider" min="0" max="100" value="50" step="1">
-                    </div>
-                </section>
-
-                <section class="dashboard-window" id="windowRefVsResult">
-                    <div class="comparison-card">
-                        <h4>Reference vs Result</h4>
-                        <div class="comparison-stage">
-                            <canvas id="compareReferenceResultBottom"></canvas>
-                            <canvas id="compareReferenceResultTop"></canvas>
-                        </div>
-                        <input type="range" id="compareReferenceResultSlider" class="comparison-slider" min="0" max="100" value="50" step="1">
-                    </div>
-                </section>
-
-                <div class="adjustments-section" id="adjustmentsSection" style="display: none;">
-                    <h3>Fine-Tune Adjustments</h3>
-                    <div class="tool-layer-toggles" id="toolLayerToggles">
-                        <button type="button" class="layer-toggle active" data-layer="layerTransfer">Transfer</button>
-                        <button type="button" class="layer-toggle" data-layer="layerColor">Color</button>
-                        <button type="button" class="layer-toggle" data-layer="layerTone">Tone</button>
-                        <button type="button" class="layer-toggle" data-layer="layerActions">Actions</button>
-                    </div>
-
-                    <div class="adjustments-container">
-                        <div class="tool-layer active" id="layerTransfer">
-                            <div class="adjustment-group">
-                                <h4>Transfer Strength</h4>
-                                <div class="slider-row">
-                                    <label for="strengthSlider">Strength</label>
-                                    <input type="range" id="strengthSlider" min="0" max="100" value="100" step="1">
-                                    <span class="slider-value" id="strengthValue">100</span>
+                <div class="dashboard-workspace" id="dashboardWorkspace">
+                    <div class="workspace-snap-preview" id="workspaceSnapPreview" aria-hidden="true"></div>
+                    <section class="dashboard-window active" id="windowThreeUp" data-default-x="16" data-default-y="16" data-default-w="760" data-default-h="440">
+                        <div class="dashboard-window-shell">
+                            <div class="dashboard-window-bar"><span>Three-Up</span></div>
+                            <div class="results-container">
+                                <div class="result-item">
+                                    <h3>Original</h3>
+                                    <canvas id="originalCanvas"></canvas>
                                 </div>
-                                <div class="slider-row">
-                                    <label for="algorithmMethod">Method</label>
-                                    <select id="algorithmMethod">
-                                        <option value="hybrid-lab" selected>Hybrid LAB</option>
-                                        <option value="reinhard-lab">Reinhard LAB</option>
-                                        <option value="lab-histogram">LAB Histogram</option>
-                                        <option value="rgb-mean-std">RGB Mean/Std</option>
-                                        <option value="auto">Auto</option>
-                                    </select>
+                                <div class="result-item">
+                                    <h3>Reference</h3>
+                                    <canvas id="referenceCanvas"></canvas>
                                 </div>
-                                <div class="slider-row">
-                                    <label for="performanceMode">Performance</label>
-                                    <select id="performanceMode">
-                                        <option value="fast">Fast</option>
-                                        <option value="balanced" selected>Balanced</option>
-                                        <option value="quality">Quality</option>
-                                    </select>
-                                </div>
-                                <p class="method-hint" id="methodHint">Balanced default for most images.</p>
-                            </div>
-                        </div>
-
-                        <div class="tool-layer" id="layerColor">
-                            <div class="adjustment-group">
-                                <h4>Color Balance</h4>
-                                <div class="slider-row">
-                                    <label for="temperatureSlider">Temperature</label>
-                                    <input type="range" id="temperatureSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="temperatureValue">0</span>
-                                </div>
-                                <div class="slider-row">
-                                    <label for="tintSlider">Tint</label>
-                                    <input type="range" id="tintSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="tintValue">0</span>
-                                </div>
-                                <div class="slider-row">
-                                    <label for="saturationSlider">Saturation</label>
-                                    <input type="range" id="saturationSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="saturationValue">0</span>
+                                <div class="result-item">
+                                    <h3>Result</h3>
+                                    <canvas id="resultCanvas"></canvas>
                                 </div>
                             </div>
                         </div>
+                    </section>
 
-                        <div class="tool-layer" id="layerTone">
-                            <div class="adjustment-group">
-                                <h4>Exposure & Contrast</h4>
-                                <div class="slider-row">
-                                    <label for="exposureSlider">Exposure</label>
-                                    <input type="range" id="exposureSlider" min="-200" max="200" value="0" step="1">
-                                    <span class="slider-value" id="exposureValue">0</span>
+                    <section class="dashboard-window" id="windowOrigVsResult" data-default-x="140" data-default-y="72" data-default-w="640" data-default-h="430">
+                        <div class="dashboard-window-shell">
+                            <div class="dashboard-window-bar"><span>Original vs Result</span></div>
+                            <div class="comparison-card">
+                                <h4>Original vs Result</h4>
+                                <div class="comparison-stage">
+                                    <canvas id="compareOriginalResultBottom"></canvas>
+                                    <canvas id="compareOriginalResultTop"></canvas>
                                 </div>
-                                <div class="slider-row">
-                                    <label for="contrastSlider">Contrast</label>
-                                    <input type="range" id="contrastSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="contrastValue">0</span>
-                                </div>
+                                <input type="range" id="compareOriginalResultSlider" class="comparison-slider" min="0" max="100" value="50" step="1">
                             </div>
-                            <div class="adjustment-group">
-                                <h4>Tone Mapping</h4>
-                                <div class="slider-row">
-                                    <label for="highlightsSlider">Highlights</label>
-                                    <input type="range" id="highlightsSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="highlightsValue">0</span>
+                        </div>
+                    </section>
+
+                    <section class="dashboard-window" id="windowRefVsResult" data-default-x="240" data-default-y="120" data-default-w="640" data-default-h="430">
+                        <div class="dashboard-window-shell">
+                            <div class="dashboard-window-bar"><span>Reference vs Result</span></div>
+                            <div class="comparison-card">
+                                <h4>Reference vs Result</h4>
+                                <div class="comparison-stage">
+                                    <canvas id="compareReferenceResultBottom"></canvas>
+                                    <canvas id="compareReferenceResultTop"></canvas>
                                 </div>
-                                <div class="slider-row">
-                                    <label for="shadowsSlider">Shadows</label>
-                                    <input type="range" id="shadowsSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="shadowsValue">0</span>
+                                <input type="range" id="compareReferenceResultSlider" class="comparison-slider" min="0" max="100" value="50" step="1">
+                            </div>
+                        </div>
+                    </section>
+                    <section class="dashboard-window active dock-right" id="windowAdjustments" data-default-x="800" data-default-y="16" data-default-w="420" data-default-h="650">
+                        <div class="dashboard-window-shell">
+                            <div class="dashboard-window-bar"><span>Adjustments</span></div>
+                            <div class="adjustments-section window-surface" id="adjustmentsSection" style="display: none;">
+                                <div class="panel-subbar">
+                                    <h3>Fine-Tune Adjustments</h3>
+                                    <div class="tool-layer-toggles" id="toolLayerToggles">
+                                        <button type="button" class="layer-toggle active" data-layer="layerTransfer">Transfer</button>
+                                        <button type="button" class="layer-toggle" data-layer="layerColor">Color</button>
+                                        <button type="button" class="layer-toggle" data-layer="layerTone">Tone</button>
+                                        <button type="button" class="layer-toggle" data-layer="layerActions">Actions</button>
+                                    </div>
                                 </div>
-                                <div class="slider-row">
-                                    <label for="whitesSlider">Whites</label>
-                                    <input type="range" id="whitesSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="whitesValue">0</span>
-                                </div>
-                                <div class="slider-row">
-                                    <label for="blacksSlider">Blacks</label>
-                                    <input type="range" id="blacksSlider" min="-100" max="100" value="0" step="1">
-                                    <span class="slider-value" id="blacksValue">0</span>
+
+                                <div class="adjustments-container">
+                                    <div class="tool-layer active" id="layerTransfer">
+                                        <div class="adjustment-group">
+                                            <h4>Transfer Strength</h4>
+                                            <div class="slider-row">
+                                                <label for="strengthSlider">Strength</label>
+                                                <input type="range" id="strengthSlider" min="0" max="100" value="100" step="1">
+                                                <span class="slider-value" id="strengthValue">100</span>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="algorithmMethod">Method</label>
+                                                <select id="algorithmMethod">
+                                                    <option value="hybrid-lab" selected>Hybrid LAB</option>
+                                                    <option value="reinhard-lab">Reinhard LAB</option>
+                                                    <option value="lab-histogram">LAB Histogram</option>
+                                                    <option value="rgb-mean-std">RGB Mean/Std</option>
+                                                    <option value="auto">Auto</option>
+                                                </select>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="performanceMode">Performance</label>
+                                                <select id="performanceMode">
+                                                    <option value="fast">Fast</option>
+                                                    <option value="balanced" selected>Balanced</option>
+                                                    <option value="quality">Quality</option>
+                                                </select>
+                                            </div>
+                                            <p class="method-hint" id="methodHint">Balanced default for most images.</p>
+                                        </div>
+                                    </div>
+
+                                    <div class="tool-layer" id="layerColor">
+                                        <div class="adjustment-group">
+                                            <h4>Color Balance</h4>
+                                            <div class="slider-row">
+                                                <label for="temperatureSlider">Temperature</label>
+                                                <input type="range" id="temperatureSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="temperatureValue">0</span>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="tintSlider">Tint</label>
+                                                <input type="range" id="tintSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="tintValue">0</span>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="saturationSlider">Saturation</label>
+                                                <input type="range" id="saturationSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="saturationValue">0</span>
+                                            </div>
+                                            <div class="color-wheel-grid">
+                                                <div class="color-wheel-card">
+                                                    <div class="color-wheel-card-header">
+                                                        <h5>Shadows</h5>
+                                                        <button type="button" class="mini-btn" data-wheel-reset="shadow">Reset</button>
+                                                    </div>
+                                                    <canvas id="shadowWheelCanvas" class="color-wheel-canvas" width="160" height="160"></canvas>
+                                                    <input type="color" id="shadowWheelColor" value="#3a6cff" hidden>
+                                                    <input type="range" id="shadowWheelAmount" min="-100" max="100" value="0" step="1">
+                                                    <span class="slider-value" id="shadowWheelAmountValue">0</span>
+                                                </div>
+                                                <div class="color-wheel-card">
+                                                    <div class="color-wheel-card-header">
+                                                        <h5>Midtones</h5>
+                                                        <button type="button" class="mini-btn" data-wheel-reset="midtone">Reset</button>
+                                                    </div>
+                                                    <canvas id="midtoneWheelCanvas" class="color-wheel-canvas" width="160" height="160"></canvas>
+                                                    <input type="color" id="midtoneWheelColor" value="#ffffff" hidden>
+                                                    <input type="range" id="midtoneWheelAmount" min="-100" max="100" value="0" step="1">
+                                                    <span class="slider-value" id="midtoneWheelAmountValue">0</span>
+                                                </div>
+                                                <div class="color-wheel-card">
+                                                    <div class="color-wheel-card-header">
+                                                        <h5>Highlights</h5>
+                                                        <button type="button" class="mini-btn" data-wheel-reset="highlight">Reset</button>
+                                                    </div>
+                                                    <canvas id="highlightWheelCanvas" class="color-wheel-canvas" width="160" height="160"></canvas>
+                                                    <input type="color" id="highlightWheelColor" value="#ffb347" hidden>
+                                                    <input type="range" id="highlightWheelAmount" min="-100" max="100" value="0" step="1">
+                                                    <span class="slider-value" id="highlightWheelAmountValue">0</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="tool-layer" id="layerTone">
+                                        <div class="adjustment-group">
+                                            <h4>Exposure & Contrast</h4>
+                                            <div class="slider-row">
+                                                <label for="exposureSlider">Exposure</label>
+                                                <input type="range" id="exposureSlider" min="-200" max="200" value="0" step="1">
+                                                <span class="slider-value" id="exposureValue">0</span>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="contrastSlider">Contrast</label>
+                                                <input type="range" id="contrastSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="contrastValue">0</span>
+                                            </div>
+                                        </div>
+                                        <div class="adjustment-group">
+                                            <h4>Tone Mapping</h4>
+                                            <div class="slider-row">
+                                                <label for="highlightsSlider">Highlights</label>
+                                                <input type="range" id="highlightsSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="highlightsValue">0</span>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="shadowsSlider">Shadows</label>
+                                                <input type="range" id="shadowsSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="shadowsValue">0</span>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="whitesSlider">Whites</label>
+                                                <input type="range" id="whitesSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="whitesValue">0</span>
+                                            </div>
+                                            <div class="slider-row">
+                                                <label for="blacksSlider">Blacks</label>
+                                                <input type="range" id="blacksSlider" min="-100" max="100" value="0" step="1">
+                                                <span class="slider-value" id="blacksValue">0</span>
+                                            </div>
+                                            <div class="curves-editor">
+                                                <div class="curves-header">
+                                                    <label>Master Curve</label>
+                                                    <div class="curves-header-actions">
+                                                        <span class="curves-hint">Click to add points. Double-click a point to remove it.</span>
+                                                        <button type="button" class="curves-reset-btn" id="resetCurveBtn">Reset Curve</button>
+                                                    </div>
+                                                </div>
+                                                <canvas id="curvesCanvas" class="curves-canvas" width="320" height="220"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="tool-layer" id="layerActions">
+                                        <div class="workflow-controls">
+                                            <div class="control-group">
+                                                <h5>Export</h5>
+                                                <button class="quick-export-btn workflow-btn" onclick="quickExportResult()">Quick Export</button>
+                                                <button class="full-export-btn workflow-btn" onclick="showFullExportDialog()">Full Export</button>
+                                                <button class="lut-btn workflow-btn" onclick="showLUTExportDialog()">Export LUT</button>
+                                            </div>
+                                            <div class="control-group">
+                                                <button class="reset-btn workflow-btn" onclick="resetAdjustments()">Reset All</button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
+                    </section>
 
-                        <div class="tool-layer" id="layerActions">
-                            <div class="workflow-controls">
-                                <div class="control-group">
-                                    <h5>Export</h5>
-                                    <button class="quick-export-btn workflow-btn" onclick="quickExportResult()">Quick Export</button>
-                                    <button class="full-export-btn workflow-btn" onclick="showFullExportDialog()">Full Export</button>
-                                    <button class="lut-btn workflow-btn" onclick="showLUTExportDialog()">Export LUT</button>
+                    <section class="dashboard-window active dock-bottom" id="windowAnalysis" data-default-x="16" data-default-y="470" data-default-w="1200" data-default-h="260">
+                        <div class="dashboard-window-shell">
+                            <div class="dashboard-window-bar"><span>Color Analysis</span></div>
+                            <div class="unified-analysis-section window-surface" id="unifiedAnalysisSection">
+                                <div class="panel-subbar">
+                                    <h3>Color Analysis &amp; Statistical Comparison</h3>
                                 </div>
-                                <div class="control-group">
-                                    <button class="reset-btn workflow-btn" onclick="resetAdjustments()">Reset All</button>
-                                </div>
+                                <div id="colorVisualizationContainer"></div>
                             </div>
                         </div>
-                    </div>
-                </div>
-
-                <div class="unified-analysis-section" id="unifiedAnalysisSection">
-                    <h3>Color Analysis &amp; Statistical Comparison</h3>
-                    <div id="colorVisualizationContainer"></div>
+                    </section>
                 </div>
             </section>
         </main>
@@ -612,6 +685,22 @@
                     <button type="button" id="settSaveBtn" class="export-btn">Save All Settings</button>
                     <span class="settings-note">Provider rows save with “Save Provider”. Search-source keys save here. All keys stay local in your browser.</span>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="imagePreviewModal" style="display:none;">
+        <div class="image-preview-modal-content">
+            <div class="image-preview-modal-header">
+                <h3 id="imagePreviewTitle">Preview</h3>
+                <button class="modal-close" onclick="closeImagePreview()">&times;</button>
+            </div>
+            <div class="image-preview-modal-body">
+                <img id="imagePreviewModalImg" alt="Preview" />
+            </div>
+            <div class="image-preview-modal-footer">
+                <button type="button" class="cancel-btn" onclick="closeImagePreview()">Close</button>
+                <button type="button" class="export-btn" id="imagePreviewPrimaryAction" style="display:none;">Use as Reference</button>
             </div>
         </div>
     </div>
