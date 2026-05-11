@@ -119,8 +119,6 @@ const workspaceSessionSubtitle = document.getElementById('workspaceSessionSubtit
 const backToSessionsBtn = document.getElementById('backToSessionsBtn');
 const addSourceToSessionBtn = document.getElementById('addSourceToSessionBtn');
 const addReferenceToSessionTopBtn = document.getElementById('addReferenceToSessionTopBtn');
-const addSourceRailBtn = document.getElementById('addSourceRailBtn');
-const addReferenceRailBtn = document.getElementById('addReferenceRailBtn');
 const quickStartSourceBtn = document.getElementById('quickStartSourceBtn');
 const quickStartReferenceBtn = document.getElementById('quickStartReferenceBtn');
 const newLookBtn = document.getElementById('newLookBtn');
@@ -139,10 +137,13 @@ let verticalDivider = null;
 let horizontalDivider = null;
 let currentWorkspacePreset = 'edit';
 let workspaceMode = 'home';
+let dragFrame = null;
+let pendingDragPointer = null;
 const workspaceSplitState = {
     rightRatio: 0.32,
     bottomRatio: 0.30
 };
+const STYLE_MODE_KEY = 'chromamatch-style-mode';
 
 function applyTheme(theme) {
     document.body.setAttribute('data-theme', theme);
@@ -151,11 +152,21 @@ function applyTheme(theme) {
     }
 }
 
+function applyStyleMode(mode) {
+    const nextMode = mode === 'ascii' ? 'ascii' : 'clean';
+    document.body.setAttribute('data-style', nextMode);
+    const styleToggle = document.getElementById('styleToggle');
+    if (styleToggle) {
+        styleToggle.textContent = nextMode === 'ascii' ? 'Style: ASCII' : 'Style: Clean';
+    }
+}
+
 function initializeTheme() {
     const savedTheme = localStorage.getItem('chromamatch-theme');
     const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
     applyTheme(initialTheme);
+    applyStyleMode(localStorage.getItem(STYLE_MODE_KEY) || 'clean');
 }
 
 function toggleTheme() {
@@ -163,6 +174,13 @@ function toggleTheme() {
     const next = current === 'dark' ? 'light' : 'dark';
     localStorage.setItem('chromamatch-theme', next);
     applyTheme(next);
+}
+
+function toggleStyleMode() {
+    const current = document.body.getAttribute('data-style') || 'clean';
+    const next = current === 'ascii' ? 'clean' : 'ascii';
+    localStorage.setItem(STYLE_MODE_KEY, next);
+    applyStyleMode(next);
 }
 
 function createSessionTemplate(name = '') {
@@ -178,6 +196,7 @@ function createSessionTemplate(name = '') {
         activeLookIds: [],
         focusedLookId: null,
         looks: [],
+        matchMemory: [],
         styleState: null,
         layout: {
             preset: 'edit',
@@ -225,6 +244,7 @@ function normalizeSessionRecord(session) {
     normalized.sources = Array.isArray(normalized.sources) ? normalized.sources : [];
     normalized.references = Array.isArray(normalized.references) ? normalized.references : [];
     normalized.looks = Array.isArray(normalized.looks) ? normalized.looks : [];
+    normalized.matchMemory = Array.isArray(normalized.matchMemory) ? normalized.matchMemory : [];
     normalized.activeSourceIds = Array.isArray(normalized.activeSourceIds) ? normalized.activeSourceIds : [];
     normalized.activeReferenceIds = Array.isArray(normalized.activeReferenceIds) ? normalized.activeReferenceIds : [];
     normalized.activeLookIds = Array.isArray(normalized.activeLookIds) ? normalized.activeLookIds : [];
@@ -290,6 +310,77 @@ function getSessionLayoutState() {
     session.layout.panelRects = session.layout.panelRects || {};
     session.layout.panelSlots = session.layout.panelSlots || {};
     return session.layout;
+}
+
+function collectCurrentAdjustmentState() {
+    return {
+        temperature: parseInt(temperatureSlider.value, 10),
+        tint: parseInt(tintSlider.value, 10),
+        saturation: parseInt(saturationSlider.value, 10),
+        contrast: parseInt(contrastSlider.value, 10),
+        highlights: parseInt(highlightsSlider.value, 10),
+        shadows: parseInt(shadowsSlider.value, 10),
+        whites: parseInt(whitesSlider.value, 10),
+        blacks: parseInt(blacksSlider.value, 10),
+        exposure: parseInt(exposureSlider.value, 10),
+        strength: parseInt(strengthSlider.value, 10),
+        method: algorithmMethod.value,
+        shadowWheelAmount: parseInt(shadowWheelAmount?.value || '0', 10),
+        midtoneWheelAmount: parseInt(midtoneWheelAmount?.value || '0', 10),
+        highlightWheelAmount: parseInt(highlightWheelAmount?.value || '0', 10),
+        shadowWheelColor: shadowWheelColor?.value || '#3a6cff',
+        midtoneWheelColor: midtoneWheelColor?.value || '#ffffff',
+        highlightWheelColor: highlightWheelColor?.value || '#ffb347',
+        curvePoints: imageAdjustments.getCurvePoints()
+    };
+}
+
+function moveSessionAsset(type, assetId, direction) {
+    const session = touchActiveSession();
+    if (!session) return;
+    const listName = type === 'source' ? 'sources' : 'references';
+    const list = [...(session[listName] || [])];
+    const index = list.findIndex((item) => item.id === assetId);
+    if (index < 0) return;
+    const nextIndex = direction === 'backward' ? index - 1 : index + 1;
+    if (nextIndex < 0 || nextIndex >= list.length) return;
+    [list[index], list[nextIndex]] = [list[nextIndex], list[index]];
+    session[listName] = list;
+    saveSessionLibrary();
+    if (type === 'source') renderSourceTray();
+    else renderReferenceRail();
+}
+
+function rememberCurrentMatch() {
+    const session = touchActiveSession();
+    const source = getActiveSourceRecord();
+    const reference = getActiveReferenceRecord();
+    if (!session || !source || !reference || !resultCanvas?.width) return;
+    const matchId = `match_${source.id}_${reference.id}`;
+    const entry = {
+        id: `${matchId}_${Date.now()}`,
+        sourceId: source.id,
+        referenceId: reference.id,
+        sourceName: source.name || 'Source',
+        referenceName: reference.name || 'Reference',
+        previewDataUrl: resultCanvas.toDataURL('image/png'),
+        adjustments: collectCurrentAdjustmentState(),
+        createdAt: new Date().toISOString()
+    };
+    const existing = (session.matchMemory || []).filter((item) => !(item.sourceId === source.id && item.referenceId === reference.id));
+    session.matchMemory = [entry, ...existing].slice(0, 12);
+    saveSessionLibrary();
+    renderLookCompareBoard();
+}
+
+function restoreMatchMemory(matchId) {
+    const session = getActiveSession();
+    const match = session?.matchMemory?.find((item) => item.id === matchId);
+    if (!match) return;
+    if (match.sourceId) activateSource(match.sourceId);
+    if (match.referenceId) activateReference(match.referenceId);
+    if (match.adjustments) applyPresetAdjustments(match.adjustments);
+    showStatus(`Restored match: ${match.sourceName} vs ${match.referenceName}`, 'success');
 }
 
 function syncWorkspaceLayoutState() {
@@ -466,23 +557,68 @@ function renderReferenceTray() {
 function renderSourceTray() {
     const session = getActiveSession();
     if (!sourceThumbList || !session) return;
-    sourceThumbList.innerHTML = (session.sources || []).map((source, index) => `
-        <button type="button" class="reference-thumb ${source.id === session.activeSourceIds[0] ? 'active' : ''}" data-source-id="${source.id}">
+    const inactiveSources = (session.sources || []).filter((source) => source.id !== session.activeSourceIds[0]);
+    const sourceCards = inactiveSources.map((source, index) => `
+        <div class="reference-thumb ${source.id === session.activeSourceIds[0] ? 'active' : ''}" data-source-id="${source.id}">
             <img src="${source.dataUrl}" alt="${source.name || `Source ${index + 1}`}" />
             <span>${source.name || `Source ${index + 1}`}</span>
-        </button>
+            <div class="thumb-actions">
+                <button type="button" class="mini-btn icon" data-action="select">Use</button>
+                <button type="button" class="mini-btn icon" data-action="backward">←</button>
+                <button type="button" class="mini-btn icon" data-action="forward">→</button>
+            </div>
+        </div>
     `).join('');
+    const addSourceCard = (session.sources || []).length ? `
+        <button type="button" class="reference-thumb add-asset-thumb" data-source-add="true">
+            <span class="add-asset-glyph">+</span>
+            <strong>Add Source</strong>
+            <small>Bring in another source image</small>
+        </button>
+    ` : '';
+    sourceThumbList.innerHTML = `${sourceCards}${addSourceCard}`;
     sourceThumbList.querySelectorAll('[data-source-id]').forEach((button) => {
-        button.addEventListener('click', () => activateSource(button.dataset.sourceId));
+        button.addEventListener('click', (event) => {
+            const action = event.target.closest('[data-action]')?.dataset.action;
+            if (!action || action === 'select') activateSource(button.dataset.sourceId);
+            else moveSessionAsset('source', button.dataset.sourceId, action);
+        });
     });
+    sourceThumbList.querySelector('[data-source-add]')?.addEventListener('click', () => sourceInput?.click());
 }
 
 function renderReferenceRail() {
-    if (!referenceRailList) return;
-    referenceRailList.innerHTML = referenceThumbList?.innerHTML || '';
+    const session = getActiveSession();
+    if (!referenceRailList || !session) return;
+    const inactiveReferences = (session.references || []).filter((reference) => reference.id !== session.activeReferenceIds[0]);
+    const referenceCards = inactiveReferences.map((reference, index) => `
+        <div class="reference-thumb ${reference.id === session.activeReferenceIds[0] ? 'active' : ''}" data-reference-id="${reference.id}">
+            <img src="${reference.dataUrl}" alt="${reference.name || `Reference ${index + 1}`}" />
+            <span>${reference.name || `Ref ${index + 1}`}</span>
+            <div class="thumb-actions">
+                <button type="button" class="mini-btn icon" data-action="select">Use</button>
+                <button type="button" class="mini-btn icon" data-action="backward">←</button>
+                <button type="button" class="mini-btn icon" data-action="forward">→</button>
+            </div>
+        </div>
+    `).join('');
+    const addReferenceCard = (session.references || []).length ? `
+        <button type="button" class="reference-thumb add-asset-thumb" data-reference-add="true">
+            <span class="add-asset-glyph">+</span>
+            <strong>Add Reference</strong>
+            <small>Search or import a new visual anchor</small>
+        </button>
+    ` : '';
+    referenceRailList.innerHTML = `${referenceCards}${addReferenceCard}`;
     referenceRailList.querySelectorAll('.reference-thumb').forEach((button) => {
-        button.addEventListener('click', () => activateReference(button.dataset.referenceId));
+        if (button.dataset.referenceAdd) return;
+        button.addEventListener('click', (event) => {
+            const action = event.target.closest('[data-action]')?.dataset.action;
+            if (!action || action === 'select') activateReference(button.dataset.referenceId);
+            else moveSessionAsset('reference', button.dataset.referenceId, action);
+        });
     });
+    referenceRailList.querySelector('[data-reference-add]')?.addEventListener('click', openReferencePopup);
 }
 
 function renderLookStrip() {
@@ -545,10 +681,9 @@ function renderLookCompareBoard() {
     const session = getActiveSession();
     if (!lookCompareGrid || !compareBoardSummary || !session) return;
     const selectedLooks = (session.activeLookIds || []).map((id) => session.looks.find((look) => look.id === id)).filter(Boolean);
-    compareBoardSummary.textContent = selectedLooks.length
-        ? `${selectedLooks.length} look${selectedLooks.length === 1 ? '' : 's'} pinned for compare.`
-        : 'Pin up to 4 looks for side-by-side review.';
-    lookCompareGrid.innerHTML = selectedLooks.map((look) => {
+    const memoryEntries = session.matchMemory || [];
+    compareBoardSummary.textContent = `${selectedLooks.length} pinned look${selectedLooks.length === 1 ? '' : 's'} · ${memoryEntries.length} remembered match${memoryEntries.length === 1 ? '' : 'es'}.`;
+    const looksMarkup = selectedLooks.map((look) => {
         const source = session.sources.find((item) => item.id === look.sourceId);
         const reference = session.references.find((item) => item.id === look.referenceIds?.[0]);
         return `
@@ -565,7 +700,29 @@ function renderLookCompareBoard() {
             </div>
         </article>
     `;
-    }).join('') || `<div class="compare-board-empty">Pin looks from the strip above to compare references, sources, and LUT candidates side by side.</div>`;
+    }).join('');
+    const memoryMarkup = memoryEntries.map((entry) => `
+        <article class="compare-look-card memory-card">
+            ${entry.previewDataUrl ? `<img src="${entry.previewDataUrl}" alt="${entry.sourceName} vs ${entry.referenceName}" />` : ''}
+            <div class="compare-look-meta">
+                <strong>${entry.sourceName}</strong>
+                <span>${entry.referenceName}</span>
+            </div>
+            <div class="look-thumb-actions">
+                <button type="button" class="mini-btn" data-action="restore" data-match-id="${entry.id}">Restore</button>
+            </div>
+        </article>
+    `).join('');
+    lookCompareGrid.innerHTML = `
+        <div class="compare-group">
+            <div class="compare-group-title">Pinned Looks</div>
+            <div class="look-compare-grid nested">${looksMarkup || `<div class="compare-board-empty">Pin looks from the strip above to compare variations side by side.</div>`}</div>
+        </div>
+        <div class="compare-group">
+            <div class="compare-group-title">Match Memory</div>
+            <div class="look-compare-grid nested">${memoryMarkup || `<div class="compare-board-empty">Processed source/reference matches will be remembered here.</div>`}</div>
+        </div>
+    `;
     lookCompareGrid.querySelectorAll('[data-look-id]').forEach((button) => {
         button.addEventListener('click', () => {
             const lookId = button.dataset.lookId;
@@ -573,6 +730,9 @@ function renderLookCompareBoard() {
             else if (button.dataset.action === 'remove') toggleLookCompare(lookId);
             else loadPreset(lookId);
         });
+    });
+    lookCompareGrid.querySelectorAll('[data-match-id]').forEach((button) => {
+        button.addEventListener('click', () => restoreMatchMemory(button.dataset.matchId));
     });
 }
 
@@ -723,8 +883,6 @@ openSessionBtn?.addEventListener('click', enterWorkspace);
 backToSessionsBtn?.addEventListener('click', exitWorkspace);
 addSourceToSessionBtn?.addEventListener('click', () => sourceInput?.click());
 addReferenceToSessionTopBtn?.addEventListener('click', openReferencePopup);
-addSourceRailBtn?.addEventListener('click', () => sourceInput?.click());
-addReferenceRailBtn?.addEventListener('click', openReferencePopup);
 quickStartSourceBtn?.addEventListener('click', () => {
     createNewSession();
     enterWorkspace();
@@ -852,7 +1010,7 @@ function setActiveDashboardWindow(windowId, options = {}) {
         redrawComparison(
             document.getElementById('compareOriginalResultBottom'),
             document.getElementById('compareOriginalResultTop'),
-            originalCanvas, resultCanvas,
+            cachedSourceImageData, currentAdjustedResultData,
             slider ? parseInt(slider.value, 10) : 50
         );
     }
@@ -861,7 +1019,7 @@ function setActiveDashboardWindow(windowId, options = {}) {
         redrawComparison(
             document.getElementById('compareReferenceResultBottom'),
             document.getElementById('compareReferenceResultTop'),
-            referenceCanvas, resultCanvas,
+            cachedTargetImageData, currentAdjustedResultData,
             slider ? parseInt(slider.value, 10) : 50
         );
     }
@@ -926,6 +1084,33 @@ function getPanelSlots(workspaceRect) {
     };
 }
 
+function getAllowedSlots(panelId, presetName = currentWorkspacePreset) {
+    const slotMap = {
+        edit: {
+            windowThreeUp: ['full', 'left', 'top', 'topLeft'],
+            windowAdjustments: ['right', 'topRight'],
+            windowAnalysis: ['bottom'],
+            windowOrigVsResult: ['center', 'topRight', 'bottomRight'],
+            windowRefVsResult: ['center', 'bottomRight', 'topRight']
+        },
+        compare: {
+            windowThreeUp: ['left', 'topLeft'],
+            windowAdjustments: ['right'],
+            windowAnalysis: ['bottom'],
+            windowOrigVsResult: ['topRight', 'right'],
+            windowRefVsResult: ['bottomRight', 'center']
+        },
+        analysis: {
+            windowThreeUp: ['left', 'topLeft'],
+            windowAdjustments: ['center', 'top'],
+            windowAnalysis: ['bottom'],
+            windowOrigVsResult: ['topRight', 'right'],
+            windowRefVsResult: ['bottomRight', 'right']
+        }
+    };
+    return slotMap[presetName]?.[panelId] || ['center'];
+}
+
 function getPreferredSlot(panelId) {
     const stored = getSessionLayoutState()?.panelSlots || {};
     const defaults = {
@@ -949,10 +1134,12 @@ function savePreferredSlot(panelId, slotName) {
 function findClosestSlot(panel, workspaceRect, clientX, clientY) {
     const slots = getPanelSlots(workspaceRect);
     const pointer = { x: clientX - workspaceRect.left, y: clientY - workspaceRect.top };
-    const preferred = getPreferredSlot(panel.id);
+    const allowedSlots = getAllowedSlots(panel.id);
+    const preferred = allowedSlots.includes(getPreferredSlot(panel.id)) ? getPreferredSlot(panel.id) : allowedSlots[0];
     let bestName = preferred;
     let bestScore = Number.POSITIVE_INFINITY;
     Object.entries(slots).forEach(([name, rect]) => {
+        if (!allowedSlots.includes(name)) return;
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
         const dx = pointer.x - cx;
@@ -1117,7 +1304,9 @@ function showSnapTargets(workspaceRect, activeSlotName) {
     ensureSnapTargetLayer();
     if (!snapTargetLayer) return;
     const slots = getPanelSlots(workspaceRect);
-    snapTargetLayer.innerHTML = Object.entries(slots).map(([name, rect]) => `
+    const activePanelId = document.querySelector('.dashboard-window.dragging')?.id;
+    const allowed = activePanelId ? getAllowedSlots(activePanelId) : Object.keys(slots);
+    snapTargetLayer.innerHTML = Object.entries(slots).filter(([name]) => allowed.includes(name)).map(([name, rect]) => `
         <div class="workspace-snap-target ${name === activeSlotName ? 'active' : ''}" data-slot="${name}" style="left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;display:flex;">
             ${name.replace(/([A-Z])/g, ' $1')}
         </div>
@@ -1132,8 +1321,15 @@ function hideSnapTargets() {
 function updateWindowDensityClasses() {
     document.querySelectorAll('.dashboard-window').forEach((panel) => {
         const width = panel.offsetWidth || parseInt(panel.style.width || '0', 10);
+        const height = panel.offsetHeight || parseInt(panel.style.height || '0', 10);
         panel.classList.toggle('compact', width > 0 && width < 430);
+        panel.classList.toggle('tight', width > 0 && width < 520);
+        panel.classList.toggle('short', height > 0 && height < 320);
         panel.classList.toggle('expanded', width >= 720);
+        const wheelSize = width < 430 ? 118 : width < 620 ? 136 : width > 860 ? 176 : 154;
+        const curveHeight = height < 320 ? 160 : height < 420 ? 190 : 220;
+        panel.style.setProperty('--panel-wheel-size', `${wheelSize}px`);
+        panel.style.setProperty('--panel-curve-height', `${curveHeight}px`);
     });
 }
 
@@ -1267,19 +1463,42 @@ function setupDashboardWindowInteractions() {
 
     let dragState = null;
     let dividerState = null;
+    let pointerOwner = null;
+    let activePointerId = null;
+    const renderDragFrame = () => {
+        dragFrame = null;
+        if (!dragState || !pendingDragPointer) return;
+        const { panel, workspaceRect } = dragState;
+        const slot = findClosestSlot(panel, workspaceRect, pendingDragPointer.clientX, pendingDragPointer.clientY);
+        dragState.slotName = slot.name;
+        dragState.slotRect = slot.rect;
+        showSnapTargets(workspaceRect, slot.name);
+        showSnapPreview(slot.rect);
+    };
     const startDrag = (event) => {
-        if (window.innerWidth <= 980) return;
+        if (window.innerWidth <= 980 || event.button !== 0) return;
         const divider = event.target.closest('.workspace-divider');
         if (divider) {
+            event.preventDefault();
+            activePointerId = event.pointerId ?? null;
+            pointerOwner = divider;
+            pointerOwner.setPointerCapture?.(activePointerId);
+            document.getSelection?.()?.removeAllRanges?.();
             dividerState = {
                 type: divider.classList.contains('vertical') ? 'vertical' : 'horizontal',
                 workspaceRect: dashboardWorkspace.getBoundingClientRect()
             };
             divider.classList.add('active');
+            document.body.classList.add('workspace-dragging');
             return;
         }
         const bar = event.target.closest('.dashboard-window-bar');
         if (!bar) return;
+        event.preventDefault();
+        activePointerId = event.pointerId ?? null;
+        pointerOwner = bar;
+        pointerOwner.setPointerCapture?.(activePointerId);
+        document.getSelection?.()?.removeAllRanges?.();
         const panel = bar.closest('.dashboard-window');
         if (!panel) return;
         bringWindowToFront(panel);
@@ -1294,10 +1513,12 @@ function setupDashboardWindowInteractions() {
             slotRect: null
         };
         panel.classList.add('dragging');
+        document.body.classList.add('workspace-dragging');
         showSnapTargets(workspaceRect, dragState.slotName);
     };
 
     const moveDrag = (event) => {
+        if (activePointerId !== null && event.pointerId !== undefined && event.pointerId !== activePointerId) return;
         if (dividerState) {
             const workspaceRect = dividerState.workspaceRect;
             if (dividerState.type === 'vertical') {
@@ -1318,18 +1539,21 @@ function setupDashboardWindowInteractions() {
             return;
         }
         if (!dragState) return;
-        const { panel, workspaceRect } = dragState;
-        const slot = findClosestSlot(panel, workspaceRect, event.clientX, event.clientY);
-        dragState.slotName = slot.name;
-        dragState.slotRect = slot.rect;
-        showSnapTargets(workspaceRect, slot.name);
-        showSnapPreview(slot.rect);
+        pendingDragPointer = { clientX: event.clientX, clientY: event.clientY };
+        if (!dragFrame) {
+            dragFrame = requestAnimationFrame(renderDragFrame);
+        }
     };
 
-    const stopDrag = () => {
+    const stopDrag = (event) => {
+        if (activePointerId !== null && event?.pointerId !== undefined && event.pointerId !== activePointerId) return;
+        pointerOwner?.releasePointerCapture?.(activePointerId);
+        pointerOwner = null;
+        activePointerId = null;
         if (dividerState) {
             verticalDivider?.classList.remove('active');
             horizontalDivider?.classList.remove('active');
+            document.body.classList.remove('workspace-dragging');
             dividerState = null;
             saveDashboardLayouts();
             return;
@@ -1340,14 +1564,20 @@ function setupDashboardWindowInteractions() {
         if (dragState.slotRect) applyRectToPanel(dragState.panel, dragState.slotRect);
         hideSnapPreview();
         hideSnapTargets();
+        if (dragFrame) cancelAnimationFrame(dragFrame);
+        dragFrame = null;
+        pendingDragPointer = null;
+        document.body.classList.remove('workspace-dragging');
         dragState = null;
         saveDashboardLayouts();
         updateWindowDensityClasses();
     };
 
-    dashboardWorkspace.addEventListener('mousedown', startDrag);
-    window.addEventListener('mousemove', moveDrag);
-    window.addEventListener('mouseup', stopDrag);
+    dashboardWorkspace.addEventListener('pointerdown', startDrag);
+    window.addEventListener('pointermove', moveDrag);
+    window.addEventListener('pointerup', stopDrag);
+    window.addEventListener('pointercancel', stopDrag);
+    window.addEventListener('blur', stopDrag);
 
     if ('ResizeObserver' in window) {
         const observer = new ResizeObserver(() => {
@@ -1738,6 +1968,7 @@ async function processImages() {
         updateMethodHint(result);
 
         displayResults(sourceImageData, targetImageData, result);
+        rememberCurrentMatch();
         showStatus('Color transfer completed successfully!', 'success');
 
     } catch (error) {
@@ -1814,8 +2045,8 @@ function updateComparisonViews() {
         redrawComparison(
             compareOriginalResultBottom,
             compareOriginalResultTop,
-            originalCanvas,
-            resultCanvas,
+            cachedSourceImageData,
+            currentAdjustedResultData,
             parseInt(compareOriginalResultSlider.value, 10)
         );
     }
@@ -1824,18 +2055,22 @@ function updateComparisonViews() {
         redrawComparison(
             compareReferenceResultBottom,
             compareReferenceResultTop,
-            referenceCanvas,
-            resultCanvas,
+            cachedTargetImageData,
+            currentAdjustedResultData,
             parseInt(compareReferenceResultSlider.value, 10)
         );
     }
 }
 
-function redrawComparison(bottomCanvas, topCanvas, leftCanvas, rightCanvas, splitPercent) {
-    if (!leftCanvas.width || !rightCanvas.width) return;
+function redrawComparison(bottomCanvas, topCanvas, leftImageData, rightImageData, splitPercent) {
+    if (!leftImageData?.width || !rightImageData?.width) return;
 
-    const width = Math.max(leftCanvas.width, rightCanvas.width);
-    const height = Math.max(leftCanvas.height, rightCanvas.height);
+    const stage = bottomCanvas.parentElement;
+    const stageWidth = Math.max(280, Math.round(stage?.clientWidth || Math.max(leftImageData.width, rightImageData.width)));
+    const aspect = Math.max(leftImageData.width / leftImageData.height, rightImageData.width / rightImageData.height);
+    const stageHeight = Math.max(180, Math.round(stageWidth / Math.max(aspect, 1e-6) * 0.72));
+    const width = stageWidth;
+    const height = stageHeight;
 
     bottomCanvas.width = width;
     bottomCanvas.height = height;
@@ -1847,19 +2082,22 @@ function redrawComparison(bottomCanvas, topCanvas, leftCanvas, rightCanvas, spli
     bottomCtx.clearRect(0, 0, width, height);
     topCtx.clearRect(0, 0, width, height);
 
-    const drawContained = (ctx, sourceCanvas) => {
-        const scale = Math.min(width / sourceCanvas.width, height / sourceCanvas.height);
-        const drawW = Math.max(1, Math.round(sourceCanvas.width * scale));
-        const drawH = Math.max(1, Math.round(sourceCanvas.height * scale));
+    const drawContained = (ctx, imageData) => {
+        displayScratchCanvas.width = imageData.width;
+        displayScratchCanvas.height = imageData.height;
+        displayScratchCanvas.getContext('2d').putImageData(imageData, 0, 0);
+        const scale = Math.min(width / imageData.width, height / imageData.height);
+        const drawW = Math.max(1, Math.round(imageData.width * scale));
+        const drawH = Math.max(1, Math.round(imageData.height * scale));
         const dx = Math.round((width - drawW) / 2);
         const dy = Math.round((height - drawH) / 2);
         ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg-tertiary') || '#f4f4f5';
         ctx.fillRect(0, 0, width, height);
-        ctx.drawImage(sourceCanvas, dx, dy, drawW, drawH);
+        ctx.drawImage(displayScratchCanvas, dx, dy, drawW, drawH);
     };
 
-    drawContained(bottomCtx, leftCanvas);
-    drawContained(topCtx, rightCanvas);
+    drawContained(bottomCtx, leftImageData);
+    drawContained(topCtx, rightImageData);
 
     topCanvas.style.clipPath = `inset(0 0 0 ${splitPercent}%)`;
 }
@@ -3392,7 +3630,8 @@ function exposeUiActions() {
         openSettings,
         closeSettings,
         closeImagePreview,
-        toggleTheme
+        toggleTheme,
+        toggleStyleMode
     });
 }
 
@@ -3436,11 +3675,11 @@ function initPresetPanel() {
 
     presetPanel.innerHTML = `
         <div class="preset-panel-header">
-            <h3>Session Looks</h3>
+            <h3>Looks & Recipes</h3>
             <button class="preset-panel-close" id="closePresetPanel">×</button>
         </div>
         <div class="preset-search">
-            <input type="text" id="presetSearchInput" placeholder="Search built-ins and this session's looks..." />
+            <input type="text" id="presetSearchInput" placeholder="Search this session's looks and starter recipes..." />
         </div>
         <div class="preset-list" id="presetList">
             ${renderPresetCardsMarkup(presets)}
@@ -3495,12 +3734,19 @@ function renderPresetList(presets) {
 
 function renderPresetCardsMarkup(presets) {
     const activePresetId = getActiveSession()?.focusedLookId || getReferenceMemory().selectedPresetId;
-    return presets.map(p => `
+    const sessionLooks = presets.filter((preset) => !preset.builtIn);
+    const starterRecipes = presets.filter((preset) => preset.builtIn);
+    const renderGroup = (title, items) => {
+        if (!items.length) return '';
+        return `
+            <div class="preset-group">
+                <div class="preset-group-title">${title}</div>
+                ${items.map((p) => `
         <div class="preset-card ${activePresetId === p.id ? 'active' : ''}" data-preset-id="${p.id}">
             <div class="preset-name">${p.name}</div>
             <div class="preset-tags">${(p.tags || []).join(', ')}</div>
             <div class="preset-meta">
-                <span class="preset-badge">${p.scope || (p.builtIn ? 'Built-in' : 'Saved')}</span>
+                <span class="preset-badge">${p.scope || (p.builtIn ? 'Starter' : 'Session')}</span>
                 <div class="preset-inline-actions">
                     <button type="button" data-action="apply" data-preset-id="${p.id}">Apply</button>
                     <button type="button" data-action="duplicate" data-preset-id="${p.id}">Duplicate</button>
@@ -3508,7 +3754,11 @@ function renderPresetCardsMarkup(presets) {
                 </div>
             </div>
         </div>
-    `).join('');
+    `).join('')}
+            </div>
+        `;
+    };
+    return `${renderGroup('Session Looks', sessionLooks)}${renderGroup('Starter Recipes', starterRecipes)}`;
 }
 
 function bindPresetPanelActions() {
@@ -3863,6 +4113,10 @@ document.addEventListener('DOMContentLoaded', () => {
     exitWorkspace();
     if (themeToggle) {
         themeToggle.addEventListener('click', toggleTheme);
+    }
+    const styleToggle = document.getElementById('styleToggle');
+    if (styleToggle) {
+        styleToggle.addEventListener('click', toggleStyleMode);
     }
 
     setupDragAndDrop();

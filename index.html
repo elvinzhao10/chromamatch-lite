@@ -14,7 +14,8 @@
                     <h1>ChromaMatch Lite</h1>
                 </div>
                 <div class="header-actions">
-                    <button id="presetPanelBtn" class="header-btn" title="Preset Library">Presets</button>
+                    <button id="presetPanelBtn" class="header-btn" title="Looks And Starter Recipes">Looks</button>
+                    <button id="styleToggle" class="header-btn" type="button">Style: Clean</button>
                     <button id="settingsBtn" class="header-btn" title="API Settings">Settings</button>
                     <button id="themeToggle" class="theme-toggle-btn" type="button">Dark Mode</button>
                 </div>
@@ -25,35 +26,35 @@
             <section class="session-hub" id="sessionHub">
                 <div class="session-hub-header">
                     <div>
-                        <h2>Sessions</h2>
-                        <p>Each session keeps its own source, reference set, active look, layout, and adjustment memory.</p>
+                        <h2>Session Library</h2>
+                        <p>Create a session, open it, and keep each grading exploration self-contained.</p>
                     </div>
                     <div class="session-hub-actions">
                         <button type="button" class="header-btn" id="newSessionBtn">New Session</button>
-                        <button type="button" class="header-btn" id="duplicateSessionBtn">Duplicate</button>
-                        <button type="button" class="header-btn danger" id="deleteSessionBtn">Delete</button>
                     </div>
                 </div>
                 <div class="session-current-card" id="sessionCurrentCard">
                     <div class="session-current-meta">
-                        <span class="session-current-label">Current Session</span>
+                        <span class="session-current-label">Selected Session</span>
                         <strong id="currentSessionName">Untitled Session</strong>
                         <span id="currentSessionStats">No source, no references</span>
                     </div>
                     <div class="session-current-actions">
                         <button type="button" class="header-btn" id="openSessionBtn">Open Session</button>
                         <button type="button" class="header-btn" id="renameSessionBtn">Rename</button>
+                        <button type="button" class="header-btn" id="duplicateSessionBtn">Duplicate</button>
+                        <button type="button" class="header-btn danger" id="deleteSessionBtn">Delete</button>
                     </div>
                 </div>
                 <div class="session-grid" id="sessionGrid"></div>
-                <div class="quick-start-card" id="quickStartCard">
+                <div class="quick-start-card compact" id="quickStartCard">
                     <div>
-                        <h3>Quick Start</h3>
-                        <p>Create a new session from dropped or uploaded images and start building references, looks, and LUTs immediately.</p>
+                        <h3>Create From Images</h3>
+                        <p>Start a new session immediately from a source or a reference.</p>
                     </div>
                     <div class="quick-start-actions">
-                        <button type="button" class="header-btn" id="quickStartSourceBtn">Add Source To New Session</button>
-                        <button type="button" class="header-btn" id="quickStartReferenceBtn">Add Reference To New Session</button>
+                        <button type="button" class="header-btn" id="quickStartSourceBtn">New From Source</button>
+                        <button type="button" class="header-btn" id="quickStartReferenceBtn">New From Reference</button>
                     </div>
                 </div>
             </section>
@@ -68,8 +69,6 @@
                         </div>
                     </div>
                     <div class="workspace-topbar-actions">
-                        <button type="button" class="header-btn" id="addSourceToSessionBtn">Add Source</button>
-                        <button type="button" class="header-btn" id="addReferenceToSessionTopBtn">Add Reference</button>
                         <button type="button" class="header-btn" id="newLookBtn">Save Look</button>
                     </div>
                 </div>
@@ -77,77 +76,79 @@
                 <section class="asset-rails">
                     <div class="asset-rail">
                         <div class="asset-rail-header">
-                            <h3>Sources</h3>
-                            <button type="button" class="mini-btn" id="addSourceRailBtn">Add</button>
+                            <h3>Source Library</h3>
+                            <span class="asset-rail-note">Pick one, keep many.</span>
+                        </div>
+                        <div class="upload-box library-box" id="sourceUpload">
+                            <div class="upload-content">
+                                <div class="active-match-top">
+                                    <div class="upload-icon">Source</div>
+                                    <button class="upload-btn compact" onclick="document.getElementById('sourceInput').click()">
+                                        Add / Replace
+                                    </button>
+                                </div>
+                                <h3>Choose Current Source</h3>
+                                <p>Select from this session’s sources or upload a new one here.</p>
+                                <input type="file" id="sourceInput" accept="image/*" hidden>
+                            </div>
+                            <div class="image-preview" id="sourcePreview" style="display: none;">
+                                <img id="sourceImg" alt="Source image">
+                                <button class="remove-btn" onclick="event.stopPropagation(); removeImage('source')">&times;</button>
+                            </div>
                         </div>
                         <div class="asset-thumb-list" id="sourceThumbList"></div>
                     </div>
                     <div class="asset-rail">
                         <div class="asset-rail-header">
-                            <h3>References</h3>
-                            <button type="button" class="mini-btn" id="addReferenceRailBtn">Add</button>
+                            <h3>Reference Library</h3>
+                            <span class="asset-rail-note">Search, swap, compare.</span>
+                        </div>
+                        <div class="reference-box library-box" id="targetUpload">
+                            <div class="ref-box-header">
+                                <div class="active-match-top">
+                                    <div class="ref-box-icon">Reference</div>
+                                    <button type="button" class="ref-upload-btn compact" onclick="openReferencePopup()">Find / Replace</button>
+                                </div>
+                                <h3>Choose Current Reference</h3>
+                                <p>Pick a session reference or bring in a new visual anchor.</p>
+                            </div>
+                            <div class="ref-box-search">
+                                <input type="file" id="targetInput" accept="image/*" hidden>
+                            </div>
+                            <div class="image-preview" id="targetPreview" style="display: none;">
+                                <img id="targetImg" alt="Reference image">
+                                <button class="remove-btn" onclick="event.stopPropagation(); removeImage('target')">&times;</button>
+                            </div>
                         </div>
                         <div class="asset-thumb-list" id="referenceRailList"></div>
                     </div>
-                    <div class="asset-rail look-rail">
-                        <div class="asset-rail-header">
-                            <h3>Looks & LUTs</h3>
-                            <button type="button" class="mini-btn" id="clearCompareBoardBtn">Clear Compare</button>
+                </section>
+
+                <section class="look-workbench">
+                    <div class="look-workbench-header">
+                        <div>
+                            <h3>Looks, Compare & Memory</h3>
+                            <p>Save session looks, pin them side by side, and bring back remembered matches.</p>
+                        </div>
+                        <button type="button" class="mini-btn" id="clearCompareBoardBtn">Clear Compare</button>
+                    </div>
+                    <div class="look-strip-panel">
+                        <div class="asset-rail-header compact">
+                            <h4>Looks & LUTs</h4>
+                            <span class="asset-rail-note">Save, pin, export.</span>
                         </div>
                         <div class="asset-thumb-list look-thumb-list" id="lookThumbList"></div>
                     </div>
+                    <div class="look-compare-board" id="lookCompareBoard">
+                        <div class="asset-rail-header">
+                            <h3>Compare Board</h3>
+                            <span id="compareBoardSummary">Pin looks and recall remembered matches in one place.</span>
+                        </div>
+                        <div class="look-compare-grid" id="lookCompareGrid"></div>
+                    </div>
                 </section>
 
-                <section class="look-compare-board" id="lookCompareBoard">
-                    <div class="asset-rail-header">
-                        <h3>Look Compare Board</h3>
-                        <span id="compareBoardSummary">Pin up to 4 looks for side-by-side review.</span>
-                    </div>
-                    <div class="look-compare-grid" id="lookCompareGrid"></div>
-                </section>
-
-                <section class="upload-section" id="uploadSection">
-                <div class="upload-container">
-                    <div class="upload-box" id="sourceUpload">
-                        <div class="upload-content">
-                            <div class="upload-icon">SRC</div>
-                            <h3>Source Image</h3>
-                            <p>Upload the image you want to modify</p>
-                            <input type="file" id="sourceInput" accept="image/*" hidden>
-                            <button class="upload-btn" onclick="document.getElementById('sourceInput').click()">
-                                Choose File
-                            </button>
-                        </div>
-                        <div class="image-preview" id="sourcePreview" style="display: none;">
-                            <img id="sourceImg" alt="Source image">
-                            <button class="remove-btn" onclick="event.stopPropagation(); removeImage('source')">&times;</button>
-                        </div>
-                    </div>
-
-                    <div class="reference-box" id="targetUpload">
-                        <div class="ref-box-header">
-                            <div class="ref-box-icon">REF</div>
-                            <h3>Reference Image</h3>
-                            <p>Click below to find or upload a reference</p>
-                        </div>
-                        <div class="ref-box-search">
-                            <input type="file" id="targetInput" accept="image/*" hidden>
-                            <button type="button" class="ref-upload-btn" onclick="openReferencePopup()">Find Reference Image</button>
-                        </div>
-                        <div class="image-preview" id="targetPreview" style="display: none;">
-                            <img id="targetImg" alt="Reference image">
-                            <button class="remove-btn" onclick="event.stopPropagation(); removeImage('target')">&times;</button>
-                        </div>
-                        <div class="reference-tray" id="referenceTray" style="display:none;">
-                            <div class="reference-tray-header">
-                                <span>Session References</span>
-                                <button type="button" class="mini-btn" id="addReferenceBtn">Add Another</button>
-                            </div>
-                            <div class="reference-thumb-list" id="referenceThumbList"></div>
-                        </div>
-                    </div>
-                </div>
-
+                <section class="upload-section compact-process" id="uploadSection">
                 <div class="process-section">
                     <button id="processBtn" class="process-btn" disabled onclick="processImages()">
                         <span class="btn-text">Transfer Colors</span>
