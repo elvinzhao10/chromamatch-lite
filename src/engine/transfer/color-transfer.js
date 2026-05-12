@@ -10,6 +10,67 @@ class ColorTransfer {
         this.activeMethod = 'reinhard-lab';
     }
 
+    srgbToLinear(value) {
+        if (value <= 0.04045) return value / 12.92;
+        return Math.pow((value + 0.055) / 1.055, 2.4);
+    }
+
+    linearToSrgb(value) {
+        const clamped = Math.max(0, Math.min(1, value));
+        if (clamped <= 0.0031308) return clamped * 12.92;
+        return 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
+    }
+
+    softClip(value, knee = 0.94) {
+        if (value <= 0) return value * 0.08;
+        if (value <= knee) return value;
+        const shoulder = 1 - knee;
+        return knee + shoulder * Math.tanh((value - knee) / Math.max(shoulder, 1e-6));
+    }
+
+    softCompressLinearRgb(rgb) {
+        let { r, g, b } = rgb;
+        const minChannel = Math.min(r, g, b);
+        if (minChannel < 0) {
+            const lift = -minChannel;
+            r += lift;
+            g += lift;
+            b += lift;
+        }
+
+        const maxChannel = Math.max(r, g, b);
+        if (maxChannel > 1) {
+            const luma = Math.max(1e-6, 0.2126 * r + 0.7152 * g + 0.0722 * b);
+            const compressedLuma = this.softClip(luma, 0.9);
+            const scale = compressedLuma / luma;
+            r *= scale;
+            g *= scale;
+            b *= scale;
+
+            const postMax = Math.max(r, g, b);
+            if (postMax > 1) {
+                const gamutScale = 1 / postMax;
+                const preserve = 0.82;
+                r = r * gamutScale * preserve + compressedLuma * (1 - preserve);
+                g = g * gamutScale * preserve + compressedLuma * (1 - preserve);
+                b = b * gamutScale * preserve + compressedLuma * (1 - preserve);
+            }
+        }
+
+        return {
+            r: Math.max(0, Math.min(1, r)),
+            g: Math.max(0, Math.min(1, g)),
+            b: Math.max(0, Math.min(1, b))
+        };
+    }
+
+    clampLab(channel, value) {
+        if (channel === 0) {
+            return Math.max(0, Math.min(100, value));
+        }
+        return Math.max(-128, Math.min(127, value));
+    }
+
     /**
      * Convert RGB to LAB color space
      * @param {ImageData} imageData - RGB image data
@@ -20,9 +81,9 @@ class ColorTransfer {
         const labData = new Float32Array(data.length);
 
         for (let i = 0; i < data.length; i += 4) {
-            const r = data[i] / 255.0;
-            const g = data[i + 1] / 255.0;
-            const b = data[i + 2] / 255.0;
+            const r = this.srgbToLinear(data[i] / 255.0);
+            const g = this.srgbToLinear(data[i + 1] / 255.0);
+            const b = this.srgbToLinear(data[i + 2] / 255.0);
 
             // RGB to XYZ conversion
             let x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
@@ -59,8 +120,8 @@ class ColorTransfer {
      * @param {number} height - Image height
      * @returns {ImageData} RGB image data
      */
-    labToRgb(labData, width, height) {
-        const rgbData = new Uint8ClampedArray(labData.length);
+    labToLinearRgbFloat(labData) {
+        const rgbData = new Float32Array(labData.length);
 
         for (let i = 0; i < labData.length; i += 4) {
             const L = labData[i];
@@ -81,18 +142,35 @@ class ColorTransfer {
             let g = x * -0.9692660 + y * 1.8760108 + z * 0.0415560;
             let b = x * 0.0556434 + y * -0.2040259 + z * 1.0572252;
 
-            // Gamma correction
-            r = r > 0.0031308 ? 1.055 * Math.pow(r, 1/2.4) - 0.055 : 12.92 * r;
-            g = g > 0.0031308 ? 1.055 * Math.pow(g, 1/2.4) - 0.055 : 12.92 * g;
-            b = b > 0.0031308 ? 1.055 * Math.pow(b, 1/2.4) - 0.055 : 12.92 * b;
-
-            rgbData[i] = Math.max(0, Math.min(255, r * 255));
-            rgbData[i + 1] = Math.max(0, Math.min(255, g * 255));
-            rgbData[i + 2] = Math.max(0, Math.min(255, b * 255));
+            rgbData[i] = r;
+            rgbData[i + 1] = g;
+            rgbData[i + 2] = b;
             rgbData[i + 3] = labData[i + 3]; // Alpha channel
         }
 
+        return rgbData;
+    }
+
+    floatLinearRgbToImageData(floatData, width, height) {
+        const rgbData = new Uint8ClampedArray(floatData.length);
+
+        for (let i = 0; i < floatData.length; i += 4) {
+            const compressed = this.softCompressLinearRgb({
+                r: floatData[i],
+                g: floatData[i + 1],
+                b: floatData[i + 2]
+            });
+            rgbData[i] = Math.round(this.linearToSrgb(compressed.r) * 255);
+            rgbData[i + 1] = Math.round(this.linearToSrgb(compressed.g) * 255);
+            rgbData[i + 2] = Math.round(this.linearToSrgb(compressed.b) * 255);
+            rgbData[i + 3] = floatData[i + 3];
+        }
+
         return new ImageData(rgbData, width, height);
+    }
+
+    labToRgb(labData, width, height) {
+        return this.floatLinearRgbToImageData(this.labToLinearRgbFloat(labData), width, height);
     }
 
     /**
@@ -141,8 +219,8 @@ class ColorTransfer {
     chooseAutoMethod(sourceImageData, performanceMode) {
         const pixels = sourceImageData.width * sourceImageData.height;
         if (performanceMode === 'fast') return 'rgb-mean-std';
-        if (pixels <= 1500000 && performanceMode !== 'balanced') return 'lab-histogram';
-        if (pixels <= 1000000) return 'lab-histogram';
+        if (pixels <= 900000 && performanceMode === 'quality') return 'lab-histogram';
+        if (pixels <= 2400000) return 'hybrid-lab';
         return 'reinhard-lab';
     }
 
@@ -248,13 +326,17 @@ class ColorTransfer {
                     ? (sourceValue - sourceMean) * (targetStd / sourceStd) + targetMean
                     : targetMean;
 
-                transferredLab[i + channel] = sourceValue + strength * (transferred - sourceValue);
+                transferredLab[i + channel] = this.clampLab(
+                    channel,
+                    sourceValue + strength * (transferred - sourceValue)
+                );
             }
             transferredLab[i + 3] = sourceLab[i + 3];
         }
 
         return {
             imageData: this.labToRgb(transferredLab, sourceImageData.width, sourceImageData.height),
+            floatData: this.labToLinearRgbFloat(transferredLab),
             sourceStats,
             targetStats
         };
@@ -282,14 +364,15 @@ class ColorTransfer {
             const tA = this.byteToLabChannel(1, mappingA[this.labChannelToByte(1, sA)]);
             const tB = this.byteToLabChannel(2, mappingB[this.labChannelToByte(2, sB)]);
 
-            transferredLab[i] = sL + strength * (tL - sL);
-            transferredLab[i + 1] = sA + strength * (tA - sA);
-            transferredLab[i + 2] = sB + strength * (tB - sB);
+            transferredLab[i] = this.clampLab(0, sL + strength * (tL - sL));
+            transferredLab[i + 1] = this.clampLab(1, sA + strength * (tA - sA));
+            transferredLab[i + 2] = this.clampLab(2, sB + strength * (tB - sB));
             transferredLab[i + 3] = sourceLab[i + 3];
         }
 
         return {
             imageData: this.labToRgb(transferredLab, sourceImageData.width, sourceImageData.height),
+            floatData: this.labToLinearRgbFloat(transferredLab),
             sourceStats,
             targetStats
         };
@@ -298,17 +381,21 @@ class ColorTransfer {
     transferRgbMeanStd(sourceImageData, targetImageData, strength, sampleStep) {
         const srcStats = this.computeRgbStatistics(sourceImageData, sampleStep);
         const tgtStats = this.computeRgbStatistics(targetImageData, sampleStep);
-        const out = new Uint8ClampedArray(sourceImageData.data.length);
+        const out = new Float32Array(sourceImageData.data.length);
         const srcData = sourceImageData.data;
 
         for (let i = 0; i < srcData.length; i += 4) {
             for (let channel = 0; channel < 3; channel++) {
-                const s = srcData[i + channel];
+                const s = this.srgbToLinear(srcData[i + channel] / 255);
+                const sourceMean = this.srgbToLinear(srcStats.mean[channel] / 255);
+                const targetMean = this.srgbToLinear(tgtStats.mean[channel] / 255);
+                const sourceStd = Math.max(1e-6, srcStats.std[channel] / 255);
+                const targetStd = Math.max(1e-6, tgtStats.std[channel] / 255);
                 const ss = srcStats.std[channel];
                 const transformed = ss > 1e-6
-                    ? (s - srcStats.mean[channel]) * (tgtStats.std[channel] / ss) + tgtStats.mean[channel]
-                    : tgtStats.mean[channel];
-                out[i + channel] = Math.max(0, Math.min(255, s + strength * (transformed - s)));
+                    ? (s - sourceMean) * (targetStd / sourceStd) + targetMean
+                    : targetMean;
+                out[i + channel] = s + strength * (transformed - s);
             }
             out[i + 3] = srcData[i + 3];
         }
@@ -320,7 +407,8 @@ class ColorTransfer {
         this.targetStats = this.computeColorStatistics(targetLab, sampleStep);
 
         return {
-            imageData: new ImageData(out, sourceImageData.width, sourceImageData.height),
+            imageData: this.floatLinearRgbToImageData(out, sourceImageData.width, sourceImageData.height),
+            floatData: out,
             sourceStats: this.sourceStats,
             targetStats: this.targetStats
         };
@@ -352,6 +440,8 @@ class ColorTransfer {
             result = this.transferHistogramLab(sourceImageData, targetImageData, strength, sampleStep);
         } else if (method === 'rgb-mean-std') {
             result = this.transferRgbMeanStd(sourceImageData, targetImageData, strength, sampleStep);
+        } else if (method === 'hybrid-lab') {
+            result = this.transferHybridLab(sourceImageData, targetImageData, strength, sampleStep);
         } else {
             result = this.transferReinhardLab(sourceImageData, targetImageData, strength, sampleStep);
         }
@@ -364,6 +454,42 @@ class ColorTransfer {
             sampleStep,
             strength
         };
+    }
+
+    transferHybridLab(sourceImageData, targetImageData, strength, sampleStep) {
+        const reinhard = this.transferReinhardLab(sourceImageData, targetImageData, strength, sampleStep);
+        const histogram = this.transferHistogramLab(sourceImageData, targetImageData, strength * 0.7, sampleStep);
+        const reinhardFloat = reinhard.floatData || this.imageDataToLinearFloat(reinhard.imageData);
+        const histogramFloat = histogram.floatData || this.imageDataToLinearFloat(histogram.imageData);
+        const merged = new Float32Array(reinhardFloat.length);
+
+        for (let i = 0; i < merged.length; i += 4) {
+            merged[i] = reinhardFloat[i] * 0.7 + histogramFloat[i] * 0.3;
+            merged[i + 1] = reinhardFloat[i + 1] * 0.7 + histogramFloat[i + 1] * 0.3;
+            merged[i + 2] = reinhardFloat[i + 2] * 0.7 + histogramFloat[i + 2] * 0.3;
+            merged[i + 3] = reinhardFloat[i + 3];
+        }
+
+        this.sourceStats = reinhard.sourceStats;
+        this.targetStats = reinhard.targetStats;
+
+        return {
+            imageData: this.floatLinearRgbToImageData(merged, sourceImageData.width, sourceImageData.height),
+            floatData: merged,
+            sourceStats: this.sourceStats,
+            targetStats: this.targetStats
+        };
+    }
+
+    imageDataToLinearFloat(imageData) {
+        const out = new Float32Array(imageData.data.length);
+        for (let i = 0; i < imageData.data.length; i += 4) {
+            out[i] = this.srgbToLinear(imageData.data[i] / 255);
+            out[i + 1] = this.srgbToLinear(imageData.data[i + 1] / 255);
+            out[i + 2] = this.srgbToLinear(imageData.data[i + 2] / 255);
+            out[i + 3] = imageData.data[i + 3];
+        }
+        return out;
     }
 
     /**
