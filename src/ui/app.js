@@ -109,6 +109,7 @@ const sessionGrid = document.getElementById('sessionGrid');
 const currentSessionNameEl = document.getElementById('currentSessionName');
 const currentSessionStatsEl = document.getElementById('currentSessionStats');
 const newSessionBtn = document.getElementById('newSessionBtn');
+const demoSessionBtn = document.getElementById('demoSessionBtn');
 const duplicateSessionBtn = document.getElementById('duplicateSessionBtn');
 const deleteSessionBtn = document.getElementById('deleteSessionBtn');
 const renameSessionBtn = document.getElementById('renameSessionBtn');
@@ -201,7 +202,7 @@ function createSessionTemplate(name = '') {
         layout: {
             preset: 'edit',
             floating: {},
-            dividerRatios: { right: 0.32, bottom: 0.30 },
+            dividerRatios: { right: 0.32, bottom: 0.36 },
             panelRects: {},
             panelSlots: {}
         }
@@ -257,7 +258,7 @@ function normalizeSessionRecord(session) {
         floating: normalized.layout?.floating || {},
         dividerRatios: {
             right: normalized.layout?.dividerRatios?.right ?? 0.32,
-            bottom: normalized.layout?.dividerRatios?.bottom ?? 0.30
+            bottom: normalized.layout?.dividerRatios?.bottom ?? 0.36
         },
         panelRects: normalized.layout?.panelRects || {},
         panelSlots: normalized.layout?.panelSlots || {}
@@ -306,7 +307,7 @@ function getSessionLayoutState() {
     session.layout = session.layout || {};
     session.layout.preset = session.layout.preset || 'edit';
     session.layout.floating = session.layout.floating || {};
-    session.layout.dividerRatios = session.layout.dividerRatios || { right: 0.32, bottom: 0.30 };
+    session.layout.dividerRatios = session.layout.dividerRatios || { right: 0.32, bottom: 0.36 };
     session.layout.panelRects = session.layout.panelRects || {};
     session.layout.panelSlots = session.layout.panelSlots || {};
     return session.layout;
@@ -388,7 +389,7 @@ function syncWorkspaceLayoutState() {
     if (!layout) return;
     currentWorkspacePreset = layout.preset || 'edit';
     workspaceSplitState.rightRatio = layout.dividerRatios?.right ?? 0.32;
-    workspaceSplitState.bottomRatio = layout.dividerRatios?.bottom ?? 0.30;
+    workspaceSplitState.bottomRatio = layout.dividerRatios?.bottom ?? 0.36;
 }
 
 function getFocusedLook() {
@@ -431,6 +432,24 @@ function deleteSessionLook(lookId) {
     return true;
 }
 
+function renameSessionLook(lookId) {
+    const session = touchActiveSession();
+    const look = session?.looks?.find((item) => item.id === lookId);
+    if (!session || !look) return false;
+    const nextName = window.prompt('Rename look', look.name || 'Untitled Look');
+    if (!nextName || !nextName.trim()) return false;
+    look.name = nextName.trim();
+    look.updatedAt = new Date().toISOString();
+    saveSessionLibrary();
+    renderLookStrip();
+    renderSessionHub();
+    if (document.getElementById('presetPanel')?.style.display !== 'none') {
+        initPresetPanel();
+    }
+    showStatus('Look renamed.', 'success');
+    return true;
+}
+
 function switchSession(sessionId) {
     if (!sessionLibrary.sessions.some((session) => session.id === sessionId)) return;
     sessionLibrary.activeSessionId = sessionId;
@@ -470,6 +489,110 @@ function createNewSession() {
     syncWorkspaceLayoutState();
     hydrateActiveSession();
     renderSessionHub();
+}
+
+function createDemoImageDataUrl(kind = 'source') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 960;
+    canvas.height = 540;
+    const ctx = canvas.getContext('2d');
+    const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    if (kind === 'reference') {
+        bg.addColorStop(0, '#120f2a');
+        bg.addColorStop(0.45, '#1d4b63');
+        bg.addColorStop(1, '#ff9d49');
+    } else {
+        bg.addColorStop(0, '#d6d1c8');
+        bg.addColorStop(0.55, '#607282');
+        bg.addColorStop(1, '#1b2535');
+    }
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = kind === 'reference' ? 'rgba(255, 180, 74, 0.78)' : 'rgba(245, 245, 238, 0.86)';
+    ctx.fillRect(0, 360, canvas.width, 180);
+    ctx.fillStyle = kind === 'reference' ? 'rgba(15, 22, 38, 0.72)' : 'rgba(42, 54, 70, 0.72)';
+    ctx.fillRect(0, 390, canvas.width, 150);
+
+    for (let i = 0; i < 8; i++) {
+        const x = 120 + i * 92;
+        const h = 170 + (i % 3) * 44;
+        ctx.fillStyle = kind === 'reference' ? 'rgba(16, 19, 32, 0.86)' : 'rgba(210, 214, 220, 0.72)';
+        ctx.fillRect(x, 190 - (h - 170), 48, h);
+        ctx.fillStyle = kind === 'reference' ? 'rgba(255, 101, 96, 0.74)' : 'rgba(80, 95, 110, 0.58)';
+        ctx.fillRect(x + 8, 214, 10, 94);
+    }
+
+    const glow = ctx.createRadialGradient(760, 138, 12, 760, 138, 190);
+    glow.addColorStop(0, kind === 'reference' ? 'rgba(255, 211, 126, 0.95)' : 'rgba(255,255,255,0.65)');
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(560, 0, 400, 310);
+
+    ctx.fillStyle = kind === 'reference' ? 'rgba(11, 16, 28, 0.5)' : 'rgba(255,255,255,0.16)';
+    ctx.font = '600 24px Inter, sans-serif';
+    ctx.fillText(kind === 'reference' ? 'DEMO REFERENCE' : 'DEMO SOURCE', 36, 56);
+    return canvas.toDataURL('image/png');
+}
+
+function createDemoSession() {
+    const session = createSessionTemplate('Demo: Neon Street Match');
+    const sourceId = `source_demo_${Date.now()}`;
+    const referenceId = `reference_demo_${Date.now()}`;
+    session.sources = [{ id: sourceId, name: 'Demo Source - neutral street', dataUrl: createDemoImageDataUrl('source') }];
+    session.references = [{ id: referenceId, name: 'Demo Reference - warm neon', dataUrl: createDemoImageDataUrl('reference') }];
+    session.activeSourceIds = [sourceId];
+    session.activeReferenceIds = [referenceId];
+    session.looks = [{
+        id: `look_demo_${Date.now()}`,
+        name: 'Warm Neon Starter',
+        tags: ['demo', 'warm', 'neon', 'wide-gamut'],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sourceId,
+        referenceIds: [referenceId],
+        adjustments: {
+            temperature: 8,
+            tint: 3,
+            saturation: 10,
+            contrast: 6,
+            highlights: -8,
+            shadows: 10,
+            whites: -6,
+            blacks: 4,
+            exposure: 0,
+            strength: 82,
+            method: 'hybrid-lab',
+            shadowWheelAmount: 0,
+            midtoneWheelAmount: 0,
+            highlightWheelAmount: 0,
+            shadowWheelColor: '#3a6cff',
+            midtoneWheelColor: '#ffffff',
+            highlightWheelColor: '#ffb347',
+            curvePoints: imageAdjustments.defaultCurvePoints()
+        },
+        previewDataUrl: createDemoImageDataUrl('reference')
+    }];
+    session.focusedLookId = session.looks[0].id;
+    session.activeLookIds = [session.looks[0].id];
+    session.matchMemory = [{
+        id: `match_demo_${Date.now()}`,
+        sourceId,
+        referenceId,
+        sourceName: session.sources[0].name,
+        referenceName: session.references[0].name,
+        previewDataUrl: session.looks[0].previewDataUrl,
+        adjustments: session.looks[0].adjustments,
+        createdAt: new Date().toISOString()
+    }];
+    sessionLibrary.sessions.unshift(session);
+    sessionLibrary.activeSessionId = session.id;
+    saveSessionLibrary();
+    syncWorkspaceLayoutState();
+    hydrateActiveSession();
+    renderSessionHub();
+    enterWorkspace();
+    showStatus('Demo session loaded. Try Transfer Colors, then compare the saved look.', 'success');
 }
 
 function deleteActiveSession() {
@@ -632,6 +755,7 @@ function renderLookStrip() {
             <div class="look-thumb-actions">
                 <button type="button" class="mini-btn" data-action="apply">Apply</button>
                 <button type="button" class="mini-btn" data-action="compare">${(session.activeLookIds || []).includes(look.id) ? 'Unpin' : 'Pin'}</button>
+                <button type="button" class="mini-btn" data-action="rename">Rename</button>
                 <button type="button" class="mini-btn" data-action="export">LUT</button>
             </div>
         </div>
@@ -642,6 +766,10 @@ function renderLookStrip() {
             const lookId = card.dataset.lookId;
             if (action === 'export') {
                 exportLookLut(lookId);
+                return;
+            }
+            if (action === 'rename') {
+                renameSessionLook(lookId);
                 return;
             }
             if (action === 'compare') {
@@ -658,8 +786,48 @@ function exportLookLut(lookId) {
     const session = getActiveSession();
     const look = session?.looks?.find((item) => item.id === lookId);
     if (!look) return;
-    loadPreset(lookId);
-    showLUTExportDialog();
+    prepareLookForLutExport(lookId);
+}
+
+function loadImageFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('Could not load linked look image.'));
+        image.src = dataUrl;
+    });
+}
+
+async function prepareLookForLutExport(lookId) {
+    const session = getActiveSession();
+    const look = session?.looks?.find((item) => item.id === lookId);
+    if (!session || !look) return;
+
+    try {
+        loadPreset(lookId);
+        const source = session.sources.find((item) => item.id === look.sourceId) || getActiveSourceRecord();
+        const reference = session.references.find((item) => item.id === look.referenceIds?.[0]) || getActiveReferenceRecord();
+        if (source?.dataUrl && reference?.dataUrl) {
+            showStatus('Preparing linked look for LUT export...', 'processing');
+            const [sourceImgForLook, referenceImgForLook] = await Promise.all([
+                loadImageFromDataUrl(source.dataUrl),
+                loadImageFromDataUrl(reference.dataUrl)
+            ]);
+            const maxProcessingSize = getProcessingMaxSize();
+            const sourceCanvas = resizeImage(sourceImgForLook, maxProcessingSize);
+            const targetCanvas = resizeImage(referenceImgForLook, maxProcessingSize);
+            const sourceData = sourceCanvas.getContext('2d').getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+            const targetData = targetCanvas.getContext('2d').getImageData(0, 0, targetCanvas.width, targetCanvas.height);
+            cachedSourceImageData = sourceData;
+            cachedTargetImageData = targetData;
+            const result = colorTransfer.transferColors(sourceData, targetData, getTransferOptions());
+            displayResults(sourceData, targetData, result);
+            if (look.adjustments) applyPresetAdjustments(look.adjustments);
+        }
+        showLUTExportDialog();
+    } catch (error) {
+        showError(`Could not prepare LUT export: ${error.message}`);
+    }
 }
 
 function toggleLookCompare(lookId) {
@@ -696,6 +864,7 @@ function renderLookCompareBoard() {
             <div class="look-thumb-actions">
                 <button type="button" class="mini-btn" data-action="apply" data-look-id="${look.id}">Apply</button>
                 <button type="button" class="mini-btn" data-action="export" data-look-id="${look.id}">Export LUT</button>
+                <button type="button" class="mini-btn" data-action="rename" data-look-id="${look.id}">Rename</button>
                 <button type="button" class="mini-btn" data-action="remove" data-look-id="${look.id}">Remove</button>
             </div>
         </article>
@@ -727,6 +896,7 @@ function renderLookCompareBoard() {
         button.addEventListener('click', () => {
             const lookId = button.dataset.lookId;
             if (button.dataset.action === 'export') exportLookLut(lookId);
+            else if (button.dataset.action === 'rename') renameSessionLook(lookId);
             else if (button.dataset.action === 'remove') toggleLookCompare(lookId);
             else loadPreset(lookId);
         });
@@ -875,6 +1045,7 @@ if (presetPanelBtn) {
     presetPanelBtn.addEventListener('click', togglePresetPanel);
 }
 newSessionBtn?.addEventListener('click', createNewSession);
+demoSessionBtn?.addEventListener('click', createDemoSession);
 duplicateSessionBtn?.addEventListener('click', duplicateActiveSession);
 deleteSessionBtn?.addEventListener('click', deleteActiveSession);
 renameSessionBtn?.addEventListener('click', renameActiveSession);
@@ -989,40 +1160,49 @@ function setActiveDashboardWindow(windowId, options = {}) {
     const { forceVisible = false } = options;
     const panel = document.getElementById(windowId);
     if (!panel) return;
-    const activePanels = Array.from(document.querySelectorAll('.dashboard-window.active'));
-    if (!forceVisible && panel.classList.contains('active') && activePanels.length > 1) {
-        panel.classList.remove('active');
+    const viewerPanels = ['windowThreeUp', 'windowOrigVsResult', 'windowRefVsResult'];
+    const dockPanels = ['windowAdjustments', 'windowAnalysis'];
+    if (viewerPanels.includes(windowId)) {
+        if (currentWorkspacePreset === 'compare') {
+            currentWorkspacePreset = 'edit';
+            const layout = getSessionLayoutState();
+            if (layout) layout.preset = 'edit';
+            updateWorkspacePresetClass();
+        }
+        viewerPanels.forEach((id) => {
+            document.getElementById(id)?.classList.toggle('active', id === windowId);
+        });
+    } else if (dockPanels.includes(windowId)) {
+        const shouldEnable = forceVisible ? true : !panel.classList.contains('active');
+        panel.classList.toggle('active', shouldEnable);
     } else {
         panel.classList.add('active');
-        bringWindowToFront(panel);
     }
+    updateWorkspaceControlState();
+    saveDashboardLayouts();
+    updateWorkspaceDividers();
+    updateWindowDensityClasses();
+    updateComparisonViews();
+}
+
+function updateWorkspaceControlState() {
     const resultWindowToggles = document.getElementById('resultWindowToggles');
-    if (resultWindowToggles) {
-        resultWindowToggles.querySelectorAll('.window-toggle').forEach((btn) => {
-            if (!btn.dataset.window) return;
+    if (!resultWindowToggles) return;
+    resultWindowToggles.querySelectorAll('.window-toggle').forEach((btn) => {
+        if (btn.dataset.window) {
             const targetPanel = document.getElementById(btn.dataset.window);
             btn.classList.toggle('active', !!targetPanel && targetPanel.classList.contains('active'));
-        });
-    }
+        }
+        if (btn.dataset.layoutPreset) {
+            btn.classList.toggle('active', btn.dataset.layoutPreset === currentWorkspacePreset);
+        }
+    });
+}
 
-    if (windowId === 'windowOrigVsResult' && panel.classList.contains('active') && originalCanvas.width) {
-        const slider = document.getElementById('compareOriginalResultSlider');
-        redrawComparison(
-            document.getElementById('compareOriginalResultBottom'),
-            document.getElementById('compareOriginalResultTop'),
-            cachedSourceImageData, currentAdjustedResultData,
-            slider ? parseInt(slider.value, 10) : 50
-        );
-    }
-    if (windowId === 'windowRefVsResult' && panel.classList.contains('active') && referenceCanvas.width) {
-        const slider = document.getElementById('compareReferenceResultSlider');
-        redrawComparison(
-            document.getElementById('compareReferenceResultBottom'),
-            document.getElementById('compareReferenceResultTop'),
-            cachedTargetImageData, currentAdjustedResultData,
-            slider ? parseInt(slider.value, 10) : 50
-        );
-    }
+function updateWorkspacePresetClass() {
+    if (!dashboardWorkspace) return;
+    dashboardWorkspace.classList.remove('workspace-preset-edit', 'workspace-preset-compare', 'workspace-preset-analysis');
+    dashboardWorkspace.classList.add(`workspace-preset-${currentWorkspacePreset || 'edit'}`);
 }
 
 function getDashboardLayouts() {
@@ -1034,6 +1214,36 @@ function getWorkspaceRect() {
     return {
         width: dashboardWorkspace.clientWidth || 1280,
         height: dashboardWorkspace.clientHeight || 860
+    };
+}
+
+function getWorkspaceLayoutMode() {
+    if (!dashboardWorkspace) return 'desktop';
+    const width = dashboardWorkspace.clientWidth || window.innerWidth || 1280;
+    if (width <= 860) return 'stacked';
+    if (width <= 1180) return 'compact';
+    return 'desktop';
+}
+
+function getWorkspacePanelLimits(layoutMode = getWorkspaceLayoutMode()) {
+    if (layoutMode === 'stacked') {
+        return {
+            dividerSize: 0,
+            right: { min: 0, max: 0 },
+            bottom: { min: 0, max: 0 }
+        };
+    }
+    if (layoutMode === 'compact') {
+        return {
+            dividerSize: 8,
+            right: { min: 280, max: 420 },
+            bottom: { min: 240, max: 420 }
+        };
+    }
+    return {
+        dividerSize: 10,
+        right: { min: 320, max: 560 },
+        bottom: { min: 260, max: 560 }
     };
 }
 
@@ -1244,39 +1454,55 @@ function getPresetLayout(layoutName, workspaceRect) {
 }
 
 function applyWorkspacePreset(layoutName) {
-    if (!dashboardWorkspace || window.innerWidth <= 980) return;
+    if (!dashboardWorkspace) return;
     currentWorkspacePreset = layoutName;
+    updateWorkspacePresetClass();
     const layoutState = getSessionLayoutState();
+    const presetDefaults = {
+        edit: { right: 0.32, bottom: 0.36, showAdjustments: true, showAnalysis: true },
+        compare: { right: 0.36, bottom: 0.30, showAdjustments: false, showAnalysis: true },
+        analysis: { right: 0.26, bottom: 0.52, showAdjustments: true, showAnalysis: true }
+    };
+    const preset = presetDefaults[layoutName] || presetDefaults.edit;
+    workspaceSplitState.rightRatio = preset.right;
+    workspaceSplitState.bottomRatio = preset.bottom;
     if (layoutState) {
         layoutState.preset = layoutName;
         layoutState.dividerRatios = {
             right: workspaceSplitState.rightRatio,
             bottom: workspaceSplitState.bottomRatio
         };
+        layoutState.panelVisibility = {
+            ...(layoutState.panelVisibility || {}),
+            windowThreeUp: layoutName !== 'compare',
+            windowOrigVsResult: layoutName === 'compare' ? true : (layoutState.panelVisibility?.windowOrigVsResult ?? false),
+            windowRefVsResult: layoutName === 'compare' ? true : (layoutState.panelVisibility?.windowRefVsResult ?? false),
+            windowAdjustments: preset.showAdjustments,
+            windowAnalysis: preset.showAnalysis
+        };
+        if (layoutName === 'edit') {
+            layoutState.panelVisibility.windowRefVsResult = false;
+        }
     }
-    const workspaceRect = getWorkspaceRect();
-    const preset = getPresetLayout(layoutName, workspaceRect);
-    document.querySelectorAll('.dashboard-window').forEach((panel, index) => {
-        const raw = preset[panel.id] || getSmartDefaultLayout(panel.id, workspaceRect);
-        const snapped = snapWindowRect(raw, panel, workspaceRect);
-        panel.classList.add('active');
-        applyRectToPanel(panel, snapped);
-        panel.style.zIndex = String(index + 1);
-    });
     if (layoutName === 'edit') {
+        document.getElementById('windowThreeUp')?.classList.add('active');
+        document.getElementById('windowOrigVsResult')?.classList.remove('active');
+        document.getElementById('windowRefVsResult')?.classList.remove('active');
+    } else if (layoutName === 'compare') {
+        document.getElementById('windowThreeUp')?.classList.remove('active');
+        document.getElementById('windowOrigVsResult')?.classList.add('active');
+        document.getElementById('windowRefVsResult')?.classList.add('active');
+    } else if (layoutName === 'analysis') {
+        document.getElementById('windowThreeUp')?.classList.add('active');
         document.getElementById('windowOrigVsResult')?.classList.remove('active');
         document.getElementById('windowRefVsResult')?.classList.remove('active');
     }
-    if (layoutName === 'compare') {
-        document.getElementById('windowAnalysis')?.classList.add('active');
-    }
-    if (layoutName === 'analysis') {
-        document.getElementById('windowAnalysis')?.classList.add('active');
-    }
+    initializeDashboardWindows();
     saveDashboardLayouts();
     updateComparisonViews();
     updateWindowDensityClasses();
     updateWorkspaceDividers();
+    updateWorkspaceControlState();
 }
 
 function showSnapPreview(rect) {
@@ -1349,37 +1575,40 @@ function ensureWorkspaceDividers() {
 
 function updateWorkspaceDividers() {
     ensureWorkspaceDividers();
-    if (!verticalDivider || !horizontalDivider || window.innerWidth <= 980) return;
-    const analysisPanel = document.getElementById('windowAnalysis');
-    const adjustmentPanel = document.getElementById('windowAdjustments');
-    const analysisTop = parseInt(analysisPanel?.style.top || '0', 10);
-    const adjustmentLeft = parseInt(adjustmentPanel?.style.left || '0', 10);
-    verticalDivider.style.display = adjustmentPanel?.classList.contains('active') ? 'block' : 'none';
-    horizontalDivider.style.display = analysisPanel?.classList.contains('active') ? 'block' : 'none';
-    verticalDivider.style.left = `${adjustmentLeft - 4}px`;
-    verticalDivider.style.top = `${DASHBOARD_MARGIN}px`;
-    verticalDivider.style.height = `${Math.max(120, analysisTop - DASHBOARD_MARGIN - 8)}px`;
-    horizontalDivider.style.left = `${DASHBOARD_MARGIN}px`;
-    horizontalDivider.style.top = `${analysisTop - 4}px`;
-    horizontalDivider.style.width = `${Math.max(240, getWorkspaceRect().width - DASHBOARD_MARGIN * 2)}px`;
+    if (!verticalDivider || !horizontalDivider) return;
+    const layoutMode = getWorkspaceLayoutMode();
+    const workspaceRect = getWorkspaceRect();
+    const adjustmentsActive = document.getElementById('windowAdjustments')?.classList.contains('active');
+    const analysisActive = document.getElementById('windowAnalysis')?.classList.contains('active');
+    const limits = getWorkspacePanelLimits(layoutMode);
+    const dividerSize = limits.dividerSize;
+    const rightWidth = (layoutMode !== 'stacked' && adjustmentsActive)
+        ? Math.max(limits.right.min, Math.min(limits.right.max, Math.round(workspaceRect.width * workspaceSplitState.rightRatio)))
+        : 0;
+    const bottomHeight = (layoutMode !== 'stacked' && analysisActive)
+        ? Math.max(limits.bottom.min, Math.min(limits.bottom.max, Math.round(workspaceRect.height * workspaceSplitState.bottomRatio)))
+        : 0;
+    dashboardWorkspace.style.setProperty('--dock-divider-size', `${dividerSize}px`);
+    dashboardWorkspace.style.setProperty('--right-panel-width', `${rightWidth}px`);
+    dashboardWorkspace.style.setProperty('--bottom-panel-height', `${bottomHeight}px`);
+    dashboardWorkspace.classList.toggle('has-right-panel', adjustmentsActive && layoutMode !== 'stacked');
+    dashboardWorkspace.classList.toggle('has-bottom-panel', analysisActive && layoutMode !== 'stacked');
+    dashboardWorkspace.classList.toggle('layout-compact', layoutMode === 'compact');
+    dashboardWorkspace.classList.toggle('layout-stacked', layoutMode === 'stacked');
+    dashboardWorkspace.classList.toggle('layout-desktop', layoutMode === 'desktop');
+    verticalDivider.style.display = adjustmentsActive && layoutMode !== 'stacked' ? 'block' : 'none';
+    horizontalDivider.style.display = analysisActive && layoutMode !== 'stacked' ? 'block' : 'none';
 }
 
 function saveDashboardLayouts() {
-    if (!dashboardWorkspace || window.innerWidth <= 980) return;
+    if (!dashboardWorkspace) return;
     const layoutState = getSessionLayoutState();
     if (!layoutState) return;
-    const layouts = {};
+    const visibility = {};
     document.querySelectorAll('.dashboard-window').forEach((panel) => {
-        layouts[panel.id] = {
-            left: panel.style.left,
-            top: panel.style.top,
-            width: panel.style.width,
-            height: panel.style.height,
-            active: panel.classList.contains('active'),
-            zIndex: panel.style.zIndex || '1'
-        };
+        visibility[panel.id] = panel.classList.contains('active');
     });
-    layoutState.panelRects = layouts;
+    layoutState.panelVisibility = visibility;
     layoutState.preset = currentWorkspacePreset;
     layoutState.dividerRatios = {
         right: workspaceSplitState.rightRatio,
@@ -1400,7 +1629,14 @@ function resetDashboardLayout() {
         layoutState.panelRects = {};
         layoutState.panelSlots = {};
         layoutState.preset = 'edit';
-        layoutState.dividerRatios = { right: 0.32, bottom: 0.30 };
+        layoutState.dividerRatios = { right: 0.32, bottom: 0.36 };
+        layoutState.panelVisibility = {
+            windowThreeUp: true,
+            windowOrigVsResult: false,
+            windowRefVsResult: false,
+            windowAdjustments: true,
+            windowAnalysis: true
+        };
         touchActiveSession();
         syncWorkspaceLayoutState();
     }
@@ -1409,12 +1645,21 @@ function resetDashboardLayout() {
 
 function initializeDashboardWindows(forceReset = false) {
     if (!dashboardWorkspace) return;
-    const isMobile = window.innerWidth <= 980;
-    const stored = forceReset ? {} : getDashboardLayouts();
-    const workspaceRect = getWorkspaceRect();
-    document.querySelectorAll('.dashboard-window').forEach((panel, index) => {
-        panel.classList.add('active');
-        if (isMobile) {
+    const layoutMode = getWorkspaceLayoutMode();
+    const layoutState = getSessionLayoutState();
+    syncWorkspaceLayoutState();
+    updateWorkspacePresetClass();
+    const storedVisibility = forceReset ? null : (layoutState?.panelVisibility || null);
+    const defaults = {
+        windowThreeUp: true,
+        windowOrigVsResult: false,
+        windowRefVsResult: false,
+        windowAdjustments: true,
+        windowAnalysis: true
+    };
+    document.querySelectorAll('.dashboard-window').forEach((panel) => {
+        panel.classList.toggle('active', storedVisibility?.[panel.id] ?? defaults[panel.id] ?? false);
+        if (layoutMode === 'stacked') {
             panel.style.left = '';
             panel.style.top = '';
             panel.style.width = '';
@@ -1422,30 +1667,25 @@ function initializeDashboardWindows(forceReset = false) {
             panel.style.zIndex = '';
             return;
         }
-        const layout = stored[panel.id] || {};
-        const defaultLayout = getSmartDefaultLayout(panel.id, workspaceRect);
-        const resolved = clampWindowRect({
-            left: parseInt(layout.left || `${defaultLayout.left}`, 10),
-            top: parseInt(layout.top || `${defaultLayout.top}`, 10),
-            width: parseInt(layout.width || `${defaultLayout.width}`, 10),
-            height: parseInt(layout.height || `${defaultLayout.height}`, 10)
-        }, panel, workspaceRect);
-        applyRectToPanel(panel, resolved);
-        panel.style.zIndex = layout.zIndex || String(index + 1);
-        if (layout.active === false && panel.id !== 'windowThreeUp') {
-            panel.classList.remove('active');
-        }
-        if (panel.dataset.focusBound !== 'true') {
-            panel.dataset.focusBound = 'true';
-            panel.addEventListener('mousedown', () => bringWindowToFront(panel));
-        }
+        panel.style.left = '';
+        panel.style.top = '';
+        panel.style.width = '';
+        panel.style.height = '';
+        panel.style.zIndex = '';
     });
-    const toggles = document.getElementById('resultWindowToggles');
-    toggles?.querySelectorAll('.window-toggle').forEach((btn) => {
-        if (!btn.dataset.window) return;
-        const targetPanel = document.getElementById(btn.dataset.window);
-        btn.classList.toggle('active', !!targetPanel?.classList.contains('active'));
-    });
+    if (currentWorkspacePreset === 'compare') {
+        document.getElementById('windowThreeUp')?.classList.remove('active');
+        document.getElementById('windowOrigVsResult')?.classList.add('active');
+        document.getElementById('windowRefVsResult')?.classList.add('active');
+    } else if (currentWorkspacePreset === 'edit' || currentWorkspacePreset === 'analysis') {
+        document.getElementById('windowThreeUp')?.classList.add('active');
+        document.getElementById('windowOrigVsResult')?.classList.remove('active');
+        document.getElementById('windowRefVsResult')?.classList.remove('active');
+    }
+    if (!document.querySelector('#windowThreeUp.active, #windowOrigVsResult.active, #windowRefVsResult.active')) {
+        document.getElementById('windowThreeUp')?.classList.add('active');
+    }
+    updateWorkspaceControlState();
     updateWindowDensityClasses();
     updateWorkspaceDividers();
     saveDashboardLayouts();
@@ -1456,93 +1696,62 @@ function setupDashboardWindowInteractions() {
     dashboardWorkspace.dataset.bound = 'true';
     initializeDashboardWindows();
     updateWindowDensityClasses();
-    hideSnapPreview();
     ensureWorkspaceDividers();
     updateWorkspaceDividers();
     document.getElementById('resetWindowLayoutBtn')?.addEventListener('click', resetDashboardLayout);
 
-    let dragState = null;
     let dividerState = null;
     let pointerOwner = null;
     let activePointerId = null;
-    const renderDragFrame = () => {
-        dragFrame = null;
-        if (!dragState || !pendingDragPointer) return;
-        const { panel, workspaceRect } = dragState;
-        const slot = findClosestSlot(panel, workspaceRect, pendingDragPointer.clientX, pendingDragPointer.clientY);
-        dragState.slotName = slot.name;
-        dragState.slotRect = slot.rect;
-        showSnapTargets(workspaceRect, slot.name);
-        showSnapPreview(slot.rect);
-    };
     const startDrag = (event) => {
-        if (window.innerWidth <= 980 || event.button !== 0) return;
+        if (getWorkspaceLayoutMode() === 'stacked' || event.button !== 0) return;
         const divider = event.target.closest('.workspace-divider');
-        if (divider) {
-            event.preventDefault();
-            activePointerId = event.pointerId ?? null;
-            pointerOwner = divider;
-            pointerOwner.setPointerCapture?.(activePointerId);
-            document.getSelection?.()?.removeAllRanges?.();
-            dividerState = {
-                type: divider.classList.contains('vertical') ? 'vertical' : 'horizontal',
-                workspaceRect: dashboardWorkspace.getBoundingClientRect()
-            };
-            divider.classList.add('active');
-            document.body.classList.add('workspace-dragging');
-            return;
-        }
-        const bar = event.target.closest('.dashboard-window-bar');
-        if (!bar) return;
+        if (!divider) return;
         event.preventDefault();
         activePointerId = event.pointerId ?? null;
-        pointerOwner = bar;
+        pointerOwner = divider;
         pointerOwner.setPointerCapture?.(activePointerId);
         document.getSelection?.()?.removeAllRanges?.();
-        const panel = bar.closest('.dashboard-window');
-        if (!panel) return;
-        bringWindowToFront(panel);
-        const rect = panel.getBoundingClientRect();
-        const workspaceRect = dashboardWorkspace.getBoundingClientRect();
-        dragState = {
-            panel,
-            offsetX: event.clientX - rect.left,
-            offsetY: event.clientY - rect.top,
-            workspaceRect,
-            slotName: getPreferredSlot(panel.id),
-            slotRect: null
+        dividerState = {
+            type: divider.classList.contains('vertical') ? 'vertical' : 'horizontal',
+            workspaceRect: dashboardWorkspace.getBoundingClientRect()
         };
-        panel.classList.add('dragging');
+        divider.classList.add('active');
         document.body.classList.add('workspace-dragging');
-        showSnapTargets(workspaceRect, dragState.slotName);
     };
 
     const moveDrag = (event) => {
         if (activePointerId !== null && event.pointerId !== undefined && event.pointerId !== activePointerId) return;
-        if (dividerState) {
-            const workspaceRect = dividerState.workspaceRect;
-            if (dividerState.type === 'vertical') {
-                const pointerX = event.clientX - workspaceRect.left;
-                workspaceSplitState.rightRatio = 1 - Math.max(0.22, Math.min(0.48, pointerX / workspaceRect.width));
-            } else {
-                const pointerY = event.clientY - workspaceRect.top;
-                workspaceSplitState.bottomRatio = 1 - Math.max(0.22, Math.min(0.5, pointerY / workspaceRect.height));
-            }
-            const layout = getSessionLayoutState();
-            if (layout) {
-                layout.dividerRatios = {
-                    right: workspaceSplitState.rightRatio,
-                    bottom: workspaceSplitState.bottomRatio
-                };
-            }
-            applyWorkspacePreset(currentWorkspacePreset);
-            return;
+        if (!dividerState) return;
+        event.preventDefault();
+        document.getSelection?.()?.removeAllRanges?.();
+        const workspaceRect = dashboardWorkspace.getBoundingClientRect();
+        const layoutMode = getWorkspaceLayoutMode();
+        const limits = getWorkspacePanelLimits(layoutMode);
+        if (dividerState.type === 'vertical') {
+            const pointerX = event.clientX - workspaceRect.left;
+            const minViewerWidth = layoutMode === 'compact' ? 320 : 420;
+            const minPointerX = Math.max(minViewerWidth, workspaceRect.width - limits.right.max);
+            const maxPointerX = Math.max(minPointerX + 40, workspaceRect.width - limits.right.min);
+            const clampedPointerX = Math.max(minPointerX, Math.min(maxPointerX, pointerX));
+            workspaceSplitState.rightRatio = 1 - (clampedPointerX / workspaceRect.width);
+        } else {
+            const pointerY = event.clientY - workspaceRect.top;
+            const minViewerHeight = layoutMode === 'compact' ? 220 : 280;
+            const minPointerY = Math.max(minViewerHeight, workspaceRect.height - limits.bottom.max);
+            const maxPointerY = Math.max(minPointerY + 40, workspaceRect.height - limits.bottom.min);
+            const clampedPointerY = Math.max(minPointerY, Math.min(maxPointerY, pointerY));
+            workspaceSplitState.bottomRatio = 1 - (clampedPointerY / workspaceRect.height);
         }
-        if (!dragState) return;
-        pendingDragPointer = { clientX: event.clientX, clientY: event.clientY };
-        if (!dragFrame) {
-            dragFrame = requestAnimationFrame(renderDragFrame);
+        const layout = getSessionLayoutState();
+        if (layout) {
+            layout.dividerRatios = {
+                right: workspaceSplitState.rightRatio,
+                bottom: workspaceSplitState.bottomRatio
+            };
         }
+        updateWorkspaceDividers();
+        updateComparisonViews();
     };
 
     const stopDrag = (event) => {
@@ -1558,19 +1767,6 @@ function setupDashboardWindowInteractions() {
             saveDashboardLayouts();
             return;
         }
-        if (!dragState) return;
-        dragState.panel.classList.remove('dragging');
-        if (dragState.slotName) savePreferredSlot(dragState.panel.id, dragState.slotName);
-        if (dragState.slotRect) applyRectToPanel(dragState.panel, dragState.slotRect);
-        hideSnapPreview();
-        hideSnapTargets();
-        if (dragFrame) cancelAnimationFrame(dragFrame);
-        dragFrame = null;
-        pendingDragPointer = null;
-        document.body.classList.remove('workspace-dragging');
-        dragState = null;
-        saveDashboardLayouts();
-        updateWindowDensityClasses();
     };
 
     dashboardWorkspace.addEventListener('pointerdown', startDrag);
@@ -1581,21 +1777,11 @@ function setupDashboardWindowInteractions() {
 
     if ('ResizeObserver' in window) {
         const observer = new ResizeObserver(() => {
-            const workspaceRect = getWorkspaceRect();
-            document.querySelectorAll('.dashboard-window.active').forEach((panel) => {
-                const snapped = snapWindowRect({
-                    left: parseInt(panel.style.left || '0', 10),
-                    top: parseInt(panel.style.top || '0', 10),
-                    width: parseInt(panel.style.width || `${panel.offsetWidth}`, 10),
-                    height: parseInt(panel.style.height || `${panel.offsetHeight}`, 10)
-                }, panel, workspaceRect);
-                applyRectToPanel(panel, snapped);
-            });
-            saveDashboardLayouts();
+            updateWorkspaceDividers();
             updateComparisonViews();
             updateWindowDensityClasses();
         });
-        document.querySelectorAll('.dashboard-window').forEach((panel) => observer.observe(panel));
+        observer.observe(dashboardWorkspace);
     }
 
     window.addEventListener('resize', () => initializeDashboardWindows());
@@ -1643,7 +1829,7 @@ function setupDashboardInteractions() {
             redrawComparison(
                 document.getElementById('compareOriginalResultBottom'),
                 document.getElementById('compareOriginalResultTop'),
-                originalCanvas, resultCanvas,
+                cachedSourceImageData, currentAdjustedResultData,
                 parseInt(origSlider.value, 10)
             );
         });
@@ -1655,7 +1841,7 @@ function setupDashboardInteractions() {
             redrawComparison(
                 document.getElementById('compareReferenceResultBottom'),
                 document.getElementById('compareReferenceResultTop'),
-                referenceCanvas, resultCanvas,
+                cachedTargetImageData, currentAdjustedResultData,
                 parseInt(refSlider.value, 10)
             );
         });
@@ -1919,6 +2105,31 @@ function buildReferenceSearchContext(query) {
     return hints.length ? `${query}\nSearch context: ${hints.join(' ; ')}` : query;
 }
 
+function buildReferenceGenerationPrompt(query) {
+    const strategy = searchService?.buildReferenceStrategy?.(query);
+    const classification = strategy?.classification;
+    const facets = classification?.facets || {};
+    const terms = [
+        ...(facets.colors || []).slice(0, 3),
+        ...(facets.subjects || []).slice(0, 3),
+        ...(facets.techniques || []).slice(0, 2),
+        ...Object.values(facets.taxonomy || {}).flat().slice(0, 4)
+    ].filter(Boolean);
+    const memoryContext = buildReferenceSearchContext(query);
+    const filmContext = classification?.film
+        ? `Inspired by the cinematography language of ${classification.film.title} (${classification.film.year}), without logos, posters, or text overlays.`
+        : 'Create a cinematic reference frame, not a poster, logo, illustration, or behind-the-scenes image.';
+    const concreteTerms = terms.length ? `Concrete visual tags: ${terms.join(', ')}.` : '';
+
+    return [
+        memoryContext,
+        filmContext,
+        concreteTerms,
+        'Use a believable photographed frame, clean composition, controlled color palette, natural dynamic range, no hard clipping, no UI text, no watermark.',
+        'Prefer a gradeable reference image with clear shadows, midtones, highlights, and useful skin/environment color separation when relevant.'
+    ].filter(Boolean).join('\n');
+}
+
 function showLoading() {
     const btnText = processBtn.querySelector('.btn-text');
     const spinner = processBtn.querySelector('.spinner');
@@ -2066,16 +2277,23 @@ function redrawComparison(bottomCanvas, topCanvas, leftImageData, rightImageData
     if (!leftImageData?.width || !rightImageData?.width) return;
 
     const stage = bottomCanvas.parentElement;
-    const stageWidth = Math.max(280, Math.round(stage?.clientWidth || Math.max(leftImageData.width, rightImageData.width)));
-    const aspect = Math.max(leftImageData.width / leftImageData.height, rightImageData.width / rightImageData.height);
-    const stageHeight = Math.max(180, Math.round(stageWidth / Math.max(aspect, 1e-6) * 0.72));
-    const width = stageWidth;
-    const height = stageHeight;
+    const stageRect = stage?.getBoundingClientRect?.();
+    const width = Math.max(280, Math.round(stageRect?.width || stage?.clientWidth || Math.max(leftImageData.width, rightImageData.width)));
+    const availableHeight = Math.max(200, Math.round(stageRect?.height || stage?.clientHeight || 320));
+    const aspect = Math.max(
+        leftImageData.width / Math.max(leftImageData.height, 1),
+        rightImageData.width / Math.max(rightImageData.height, 1)
+    );
+    const height = Math.max(180, Math.min(availableHeight, Math.round(width / Math.max(aspect, 1e-6))));
 
     bottomCanvas.width = width;
     bottomCanvas.height = height;
     topCanvas.width = width;
     topCanvas.height = height;
+    bottomCanvas.style.width = '100%';
+    bottomCanvas.style.height = '100%';
+    topCanvas.style.width = '100%';
+    topCanvas.style.height = '100%';
 
     const bottomCtx = bottomCanvas.getContext('2d');
     const topCtx = topCanvas.getContext('2d');
@@ -2902,6 +3120,13 @@ async function doRefPopupSearch() {
         const existingBanner = container.querySelector('.film-match-banner, .desc-banner');
         if (existingBanner) existingBanner.remove();
         
+        if (result.strategy) {
+            const banner = document.createElement('div');
+            banner.className = 'desc-banner search-strategy-banner';
+            banner.textContent = `Search plan: ${result.strategy.intentLabel} · ${result.strategy.querySet.slice(0, 3).join(' / ')}`;
+            container.insertBefore(banner, grid);
+        }
+
         if (result.filmMatch) {
             const banner = document.createElement('div');
             banner.className = 'film-match-banner';
@@ -3470,21 +3695,21 @@ async function doChatIntent(msg, provider, model, apiKey, baseUrl, chat) {
 async function doSearchIntent(msg, provider, model, apiKey, baseUrl, chat) {
     var thinkEl = appendChatMessage('assistant', 'Searching...', 'thinking');
     try {
-        var kw = await getSearchKeywordsFromAI(provider, msg, apiKey, model, baseUrl);
+        var result = await searchService.aiDrivenSearch(msg, {
+            provider,
+            apiKey,
+            model,
+            baseUrl,
+            contextHint: buildReferenceSearchContext(msg),
+            sources: searchService.resolveMode('ai')
+        });
         if (thinkEl) thinkEl.remove();
-        appendChatMessage('assistant', 'Searching with: ' + kw);
-        var sources = ['wikimedia', 'flickr'];
-        if (localStorage.getItem('sett_tmdb_key')) sources.push('tmdb');
-        if (localStorage.getItem('sett_unsplash_key')) sources.push('unsplash');
-        if (localStorage.getItem('sett_pexels_key')) sources.push('pexels');
-        var keywords = kw.split(/\n|,/).map(function(part) { return part.trim(); }).filter(Boolean);
-        var searches = keywords.length ? keywords : [msg];
-        var collected = await searchService.searchMultiQuery(searches, sources, { perPage: 8, limit: 16 });
-        var ranked = searchService.rankResults(collected, msg, searchService.classifyQuery(msg));
-        var r = { results: ranked.slice(0, 16) };
-        if (!r.results || !r.results.length) { appendChatMessage('assistant', 'No results.'); return; }
-        appendChatMessage('assistant', 'Found ' + r.results.length + ' images:');
-        renderChatResults(chat, r.results);
+        if (result.strategy?.querySet?.length) {
+            appendChatMessage('assistant', 'Search plan: ' + result.strategy.querySet.slice(0, 3).join(' / '));
+        }
+        if (!result.results || !result.results.length) { appendChatMessage('assistant', 'No results. Try fewer words, a film title, or ask me to generate a reference instead.'); return; }
+        appendChatMessage('assistant', 'Found ' + result.results.length + ' images:');
+        renderChatResults(chat, result.results.slice(0, 16));
     } catch (e) { if (thinkEl) thinkEl.remove(); appendChatMessage('assistant', 'Failed: ' + e.message); }
 }
 
@@ -3515,7 +3740,8 @@ async function doGenerateImage(provider, prompt, apiKey, imgModel, baseUrl, chat
     var label = PROVIDER_CONFIGS[provider] ? PROVIDER_CONFIGS[provider].label : provider;
     var thinkEl = appendChatMessage('assistant', 'Generating image (' + label + ')...', 'thinking');
     try {
-        var url = await unifiedSession.generateImage(prompt, { provider: provider, imgModel: imgModel, baseUrl: baseUrl, apiKey: apiKey });
+        var enrichedPrompt = buildReferenceGenerationPrompt(prompt);
+        var url = await unifiedSession.generateImage(enrichedPrompt, { provider: provider, imgModel: imgModel, baseUrl: baseUrl, apiKey: apiKey });
         if (thinkEl) thinkEl.remove();
         if (!url) { appendChatMessage('assistant', 'No image generated.'); return; }
         appendChatMessage('assistant', 'Generated image:');
@@ -3543,7 +3769,8 @@ async function doTuneReference(provider, prompt, apiKey, imgModel, baseUrl, chat
 
     var thinkEl = appendChatMessage('assistant', 'Tuning current reference...', 'thinking');
     try {
-        var url = await unifiedSession.generateImage(prompt, {
+        var enrichedPrompt = `${buildReferenceGenerationPrompt(prompt)}\nPreserve the loaded reference subject and composition when possible; tune palette, lighting, atmosphere, and grade direction only as requested.`;
+        var url = await unifiedSession.generateImage(enrichedPrompt, {
             provider: provider,
             imgModel: imgModel,
             baseUrl: baseUrl,
@@ -3658,7 +3885,7 @@ function togglePresetPanel() {
 
     if (presetPanel) {
         const isVisible = presetPanel.style.display !== 'none';
-        presetPanel.style.display = isVisible ? 'none' : 'block';
+        presetPanel.style.display = isVisible ? 'none' : 'flex';
 
         if (!isVisible) {
             initPresetPanel();
@@ -3750,6 +3977,7 @@ function renderPresetCardsMarkup(presets) {
                 <div class="preset-inline-actions">
                     <button type="button" data-action="apply" data-preset-id="${p.id}">Apply</button>
                     <button type="button" data-action="duplicate" data-preset-id="${p.id}">Duplicate</button>
+                    ${p.builtIn ? '' : `<button type="button" data-action="rename" data-preset-id="${p.id}">Rename</button>`}
                     ${p.builtIn ? '' : `<button type="button" data-action="delete" data-preset-id="${p.id}">Delete</button>`}
                 </div>
             </div>
@@ -3782,6 +4010,10 @@ function bindPresetPanelActions() {
                 initPresetPanel();
                 renderSessionHub();
                 showStatus('Look duplicated.', 'success');
+            }
+            if (action === 'rename') {
+                renameSessionLook(presetId);
+                initPresetPanel();
             }
             if (action === 'delete') {
                 deleteSessionLook(presetId);

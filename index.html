@@ -14,7 +14,7 @@
                     <h1>ChromaMatch Lite</h1>
                 </div>
                 <div class="header-actions">
-                    <button id="presetPanelBtn" class="header-btn" title="Looks And Starter Recipes">Looks</button>
+                    <button id="presetPanelBtn" class="header-btn" title="Session Looks and Starter Recipes">Look Library</button>
                     <button id="styleToggle" class="header-btn" type="button">Style: Clean</button>
                     <button id="settingsBtn" class="header-btn" title="API Settings">Settings</button>
                     <button id="themeToggle" class="theme-toggle-btn" type="button">Dark Mode</button>
@@ -31,6 +31,7 @@
                     </div>
                     <div class="session-hub-actions">
                         <button type="button" class="header-btn" id="newSessionBtn">New Session</button>
+                        <button type="button" class="header-btn" id="demoSessionBtn">Open Demo</button>
                     </div>
                 </div>
                 <div class="session-current-card" id="sessionCurrentCard">
@@ -127,22 +128,22 @@
                 <section class="look-workbench">
                     <div class="look-workbench-header">
                         <div>
-                            <h3>Looks, Compare & Memory</h3>
-                            <p>Save session looks, pin them side by side, and bring back remembered matches.</p>
+                            <h3>Look Library</h3>
+                            <p>Looks are saved grades. Pin looks to compare; recent processed source/reference pairs are remembered below.</p>
                         </div>
                         <button type="button" class="mini-btn" id="clearCompareBoardBtn">Clear Compare</button>
                     </div>
                     <div class="look-strip-panel">
                         <div class="asset-rail-header compact">
-                            <h4>Looks & LUTs</h4>
-                            <span class="asset-rail-note">Save, pin, export.</span>
+                            <h4>Saved Looks</h4>
+                            <span class="asset-rail-note">Apply, pin, or export LUTs.</span>
                         </div>
                         <div class="asset-thumb-list look-thumb-list" id="lookThumbList"></div>
                     </div>
                     <div class="look-compare-board" id="lookCompareBoard">
                         <div class="asset-rail-header">
-                            <h3>Compare Board</h3>
-                            <span id="compareBoardSummary">Pin looks and recall remembered matches in one place.</span>
+                            <h3>Compare & Match Memory</h3>
+                            <span id="compareBoardSummary">Pinned looks compare grades; match memory restores processed pairs.</span>
                         </div>
                         <div class="look-compare-grid" id="lookCompareGrid"></div>
                     </div>
@@ -164,16 +165,36 @@
                     <button type="button" class="change-images-btn" id="changeImagesBtn">Change Source / Reference</button>
                 </div>
 
-                <div class="window-toggle-bar" id="resultWindowToggles">
-                    <button type="button" class="window-toggle active" data-window="windowThreeUp">Three-Up</button>
-                    <button type="button" class="window-toggle" data-window="windowOrigVsResult">Original vs Result</button>
-                    <button type="button" class="window-toggle" data-window="windowRefVsResult">Reference vs Result</button>
-                    <button type="button" class="window-toggle active" data-window="windowAdjustments">Adjustments</button>
-                    <button type="button" class="window-toggle active" data-window="windowAnalysis">Analysis</button>
-                    <button type="button" class="window-toggle utility" data-layout-preset="edit">Edit</button>
-                    <button type="button" class="window-toggle utility" data-layout-preset="compare">Compare</button>
-                    <button type="button" class="window-toggle utility" data-layout-preset="analysis">Analysis Heavy</button>
-                    <button type="button" class="window-toggle utility" id="resetWindowLayoutBtn">Reset Layout</button>
+                <div class="workspace-control-bar" id="resultWindowToggles" aria-label="Workspace controls">
+                    <div class="workspace-control-group">
+                        <span class="workspace-control-label">Workspace</span>
+                        <div class="workspace-control-options">
+                            <button type="button" class="window-toggle utility" data-layout-preset="edit">Edit</button>
+                            <button type="button" class="window-toggle utility" data-layout-preset="compare">Compare</button>
+                            <button type="button" class="window-toggle utility" data-layout-preset="analysis">Analysis</button>
+                        </div>
+                    </div>
+                    <div class="workspace-control-group">
+                        <span class="workspace-control-label">Viewer</span>
+                        <div class="workspace-control-options">
+                            <button type="button" class="window-toggle active" data-window="windowThreeUp">Three-Up</button>
+                            <button type="button" class="window-toggle" data-window="windowOrigVsResult">Orig / Result</button>
+                            <button type="button" class="window-toggle" data-window="windowRefVsResult">Ref / Result</button>
+                        </div>
+                    </div>
+                    <div class="workspace-control-group">
+                        <span class="workspace-control-label">Panels</span>
+                        <div class="workspace-control-options">
+                            <button type="button" class="window-toggle active" data-window="windowAdjustments">Adjust</button>
+                            <button type="button" class="window-toggle active" data-window="windowAnalysis">Scopes</button>
+                        </div>
+                    </div>
+                    <div class="workspace-control-group workspace-control-group-reset">
+                        <span class="workspace-control-label">Layout</span>
+                        <div class="workspace-control-options">
+                            <button type="button" class="window-toggle utility" id="resetWindowLayoutBtn">Reset</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="dashboard-workspace" id="dashboardWorkspace">
@@ -656,31 +677,22 @@
             </div>
             <div class="settings-body">
                 <div class="settings-section">
-                    <h4>Provider Setup</h4>
-                    <div class="settings-guide-grid">
-                        <div class="settings-guide-card">
-                            <div class="settings-guide-title">Essential</div>
-                            <ul class="settings-guide-list">
-                                <li>Pick a provider preset</li>
-                                <li>Add an API key</li>
-                                <li>Choose a chat model</li>
-                                <li>Choose an image model if you want generate or tune</li>
-                            </ul>
-                        </div>
-                        <div class="settings-guide-card">
-                            <div class="settings-guide-title">Additional</div>
-                            <ul class="settings-guide-list">
-                                <li>Rename the provider row so it is easy to recognize</li>
-                                <li>Override the base URL for gateways or self-hosted endpoints</li>
-                                <li>Refresh model choices from the provider when supported</li>
-                            </ul>
-                        </div>
-                    </div>
-                    <div class="provider-manager-toolbar">
-                        <div class="provider-manager-copy">
-                            Add one of the built-in provider presets, then edit it any time from the table below.
+                    <div class="settings-section-header">
+                        <div>
+                            <h4>AI Providers</h4>
+                            <p>Add only what you need. One ready chat provider enables AI search; an image model enables generation and tuning.</p>
                         </div>
                         <button type="button" class="export-btn" id="addProviderBtn">Add Provider</button>
+                    </div>
+                    <div class="settings-guide-grid compact">
+                        <div class="settings-guide-card">
+                            <div class="settings-guide-title">Required</div>
+                            <p>Preset, API key, chat model.</p>
+                        </div>
+                        <div class="settings-guide-card">
+                            <div class="settings-guide-title">Optional</div>
+                            <p>Image model, custom model ID, gateway base URL.</p>
+                        </div>
                     </div>
                     <div class="provider-table-wrap">
                         <table class="provider-table">
@@ -701,7 +713,7 @@
                     </div>
                 </div>
                 <div class="settings-section">
-                    <h4>Add or Edit Provider</h4>
+                    <h4>Provider Editor</h4>
                     <div class="provider-editor-card" id="providerEditorCard" style="display:none;">
                         <div class="provider-editor-header">
                             <div>

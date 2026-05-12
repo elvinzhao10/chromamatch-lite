@@ -195,23 +195,23 @@ class SearchService {
             for (const m of (d.results || []).slice(0, 10)) {
                 const poster = m.poster_path ? `${baseUrl}/w500${m.poster_path}` : null;
                 const backdrop = m.backdrop_path ? `${baseUrl}/w780${m.backdrop_path}` : null;
-                if (poster) {
-                    results.push({
-                        id: `tmdb_${m.id}`,
-                        url: `${baseUrl}/original${m.poster_path}`,
-                        thumbnail: poster,
-                        width: 500, height: 750,
-                        description: `${m.title} (${m.release_date?.substring(0, 4) || '?'})`,
-                        author: 'TMDB', source: 'tmdb'
-                    });
-                }
-                if (backdrop && results.length < 20) {
+                if (backdrop) {
                     results.push({
                         id: `tmdb_${m.id}_bd`,
                         url: `${baseUrl}/original${m.backdrop_path}`,
                         thumbnail: backdrop,
                         width: 780, height: 439,
-                        description: `${m.title} - backdrop`,
+                        description: `${m.title} - backdrop / scene frame`,
+                        author: 'TMDB', source: 'tmdb'
+                    });
+                }
+                if (poster && !backdrop && results.length < 20) {
+                    results.push({
+                        id: `tmdb_${m.id}`,
+                        url: `${baseUrl}/original${m.poster_path}`,
+                        thumbnail: poster,
+                        width: 500, height: 750,
+                        description: `${m.title} (${m.release_date?.substring(0, 4) || '?'}) poster fallback`,
                         author: 'TMDB', source: 'tmdb'
                     });
                 }
@@ -522,6 +522,41 @@ class SearchService {
         return [...new Set(parts.filter(Boolean).flatMap((part) => String(part).split(/\s+/).filter(Boolean)))].join(' ');
     }
 
+    buildReferenceStrategy(query, mode = 'ai') {
+        const classification = this.classifyQuery(query);
+        const facets = classification.facets || {};
+        const taxonomyTerms = Object.values(facets.taxonomy || {}).flat();
+        const coreTerms = [
+            ...(facets.colors || []).slice(0, 3),
+            ...(facets.subjects || []).slice(0, 2),
+            ...(facets.techniques || []).slice(0, 2),
+            ...taxonomyTerms.slice(0, 4)
+        ].filter(Boolean);
+        const intentLabel = classification.type === 'film'
+            ? `film stills: ${classification.film.title}`
+            : classification.type === 'film-keyword'
+                ? 'cinematic frames'
+                : classification.type === 'style' || classification.type === 'descriptive'
+                    ? 'visual style references'
+                    : 'reference imagery';
+        const sourcePolicy = mode === 'cinema'
+            ? ['tmdb', 'wikimedia', 'flickr', 'unsplash', 'pexels']
+            : mode === 'photo'
+                ? ['unsplash', 'pexels', 'wikimedia', 'flickr']
+                : mode === 'archive'
+                    ? ['wikimedia', 'flickr']
+                    : this.inferPreferredSources(classification);
+        const querySet = this.buildSearchQueries(query).slice(0, 6);
+        return {
+            classification,
+            intentLabel,
+            querySet,
+            coreTerms,
+            sourcePolicy: this.resolveAvailableSources(sourcePolicy),
+            avoid: ['poster', 'logo', 'soundtrack', 'red carpet', 'interview', 'concept art', 'illustration']
+        };
+    }
+
     buildSearchQueries(query) {
         const c = this.classifyQuery(query);
         if (c.type === 'film' && c.film) {
@@ -551,10 +586,13 @@ class SearchService {
             const techniqueTerms = c.facets?.techniques || [];
             const taxonomyTerms = Object.values(c.facets?.taxonomy || {}).flat().slice(0, 4);
             const subjectTerms = c.facets?.subjects?.slice(0, 2) || [];
+            const colorTerms = c.facets?.colors?.slice(0, 3) || [];
             return [...new Set([
                 ...qs,
                 `${words.slice(0, 4).join(' ')} cinematography`,
                 `${words.slice(0, 4).join(' ')} color grading`,
+                this.joinUniqueTerms([...colorTerms, ...taxonomyTerms.slice(0, 2), 'cinematic lighting']),
+                this.joinUniqueTerms([...colorTerms, ...subjectTerms, 'film still frame']),
                 this.joinUniqueTerms([...words.slice(0, 3), ...vibeTerms.slice(0, 2), ...techniqueTerms.slice(0, 2)]),
                 this.joinUniqueTerms([...subjectTerms, ...taxonomyTerms.slice(0, 2), ...c.facets.colors.slice(0, 2), 'movie still']),
                 this.joinUniqueTerms([...subjectTerms, ...taxonomyTerms.slice(0, 2), ...vibeTerms.slice(0, 2), 'cinematic frame'])
@@ -619,7 +657,7 @@ class SearchService {
             flickr: 0.92
         };
 
-        return results
+        const ranked = results
             .map((result, index) => {
                 const haystack = `${result.description || ''} ${result.author || ''} ${result.source || ''}`.toLowerCase();
                 let score = sourceWeights[result.source] || 1;
@@ -655,7 +693,7 @@ class SearchService {
 
                 if (classification?.type === 'film' || classification?.type === 'film-keyword') {
                     if (/poster|cover|logo|fan art|bluray|dvd|soundtrack/.test(canonicalHaystack)) {
-                        score -= 1.4;
+                        score -= 2.2;
                     }
                     if (/backdrop|still|scene|frame|cinematography/.test(canonicalHaystack)) {
                         score += 1.1;
@@ -700,7 +738,11 @@ class SearchService {
                 score += Math.max(0, 0.18 - index * 0.01);
                 return { ...result, _score: score };
             })
-            .sort((a, b) => b._score - a._score)
+            .sort((a, b) => b._score - a._score);
+
+        const strong = ranked.filter((result) => result._score >= 1.35);
+        return (strong.length >= 6 ? strong : ranked)
+            .slice(0, 24)
             .map(({ _score, ...result }) => result);
     }
 
@@ -727,9 +769,10 @@ class SearchService {
     }
 
     async smartSearch(rawQuery, webSources) {
-        const c = this.classifyQuery(rawQuery);
-        const queries = this.buildSearchQueries(rawQuery);
-        const preferredSources = this.inferPreferredSources(c, webSources);
+        const strategy = this.buildReferenceStrategy(rawQuery);
+        const c = strategy.classification;
+        const queries = strategy.querySet;
+        const preferredSources = webSources?.length ? webSources : strategy.sourcePolicy;
         let allResults = [];
 
         try {
@@ -750,7 +793,8 @@ class SearchService {
         return {
             results: this.rankResults(allResults, rawQuery, c),
             filmMatch: c.film || null,
-            classification: c
+            classification: c,
+            strategy
         };
     }
 
@@ -761,10 +805,11 @@ class SearchService {
             return this.smartSearch(userQuery, ['wikimedia', 'flickr']);
         }
 
-        const classification = this.classifyQuery(userQuery);
+        const strategy = this.buildReferenceStrategy(userQuery);
+        const classification = strategy.classification;
         const allResults = [];
         const seen = new Set();
-        const searchSources = this.resolveAvailableSources(sources?.length ? sources : this.inferPreferredSources(classification));
+        const searchSources = this.resolveAvailableSources(sources?.length ? sources : strategy.sourcePolicy);
 
         try {
             const providerKey = provider || 'openai';
@@ -803,7 +848,7 @@ Detected facets: ${JSON.stringify(classification.facets)}`
             const text = providerConfig.parseChatReply(data) || '';
             const aiQueries = text.split('\n').map(l => l.replace(/^[\d.\-\s]+/, '').trim()).filter(l => l.length >= 2);
 
-            const allQueries = [...new Set([...aiQueries.slice(0, 4), ...this.buildSearchQueries(userQuery)])];
+            const allQueries = [...new Set([...aiQueries.slice(0, 4), ...strategy.querySet])];
 
             for (const q of allQueries.slice(0, 5)) {
                 try {
@@ -824,6 +869,7 @@ Detected facets: ${JSON.stringify(classification.facets)}`
             results: this.rankResults(allResults, userQuery, classification),
             filmMatch: this.matchFilm(userQuery),
             classification,
+            strategy,
             aiDriven: true
         };
     }

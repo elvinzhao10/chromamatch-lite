@@ -44,13 +44,19 @@ There are two related but different objects:
 - `Looks`: saved grading variants for the current session
 - `Match Memory`: remembered processed source/reference pair states for quick restore
 
-They are shown together in the combined `Looks, Compare & Memory` workbench.
+They are shown together in the combined `Look Library` workbench:
+
+- `Saved Looks` are intentional grading variants that can be renamed, applied, pinned, or exported as LUTs.
+- `Compare & Match Memory` is for side-by-side review and quick restoration of recent source/reference processing states.
+- the top-right `Look Library` button opens the full look/recipe panel for session looks and built-in starter recipes.
 
 ## Core Features
 
 ### Color transfer engine
 
 - `hybrid-lab` default path for balanced matching
+- linear-light float transfer buffers before final display encoding
+- soft gamut and highlight compression to reduce hard clipping
 - Reinhard LAB transfer
 - LAB histogram matching
 - RGB mean/std matching
@@ -74,15 +80,17 @@ They are shown together in the combined `Looks, Compare & Memory` workbench.
 ### Workspace and compare
 
 - session library and session workspace flow
+- built-in demo session from the home screen
 - source library and reference library per session
 - saved looks per session
+- renameable looks
 - compare board for pinned looks
 - remembered match restore
 - three-up display
 - original vs result slider
 - reference vs result slider
 - analysis panel
-- draggable workspace windows and layout presets
+- docked split-pane workspace and layout presets
 
 ### Reference workflows
 
@@ -138,7 +146,7 @@ The app currently supports:
 - clean style
 - ASCII style
 
-The ASCII style is a deliberate alternate visual mode with mono typography, squared surfaces, dashed framing, and grid-heavy presentation.
+The ASCII style is a deliberate alternate visual mode with mono typography, terminal/TUI-style borders, bracketed controls, phosphor green scanlines, squared surfaces, and grid-heavy presentation.
 
 ## Privacy Notes
 
@@ -186,6 +194,7 @@ This tends to be more reliable than `file://` for local browser behavior.
 ## Typical Session Workflow
 
 1. create or open a session
+   - or click `Open Demo` for a populated local demo session
 2. add one or more sources
 3. add or search for one or more references
 4. select the active source/reference pair
@@ -202,7 +211,7 @@ This tends to be more reliable than `file://` for local browser behavior.
 - large images are resized for interactive processing
 - adjustment previews are throttled during scrubbing
 - analysis updates are deferred to keep interaction smoother
-- windowed workspace behavior is more demanding than a simpler fixed dock layout
+- the current workspace uses docked split panes with persisted divider ratios
 
 ## Known Practical Limits
 
@@ -213,7 +222,7 @@ This tends to be more reliable than `file://` for local browser behavior.
 
 ## Recommended Next Architecture Step
 
-The current draggable window workspace works, but a stricter docked split-pane layout would likely be more robust and more professional for long-term maintenance than free-form panel behavior.
+The current branch has moved toward a stricter docked split-pane workspace. The next durable step would be extracting the session/look store and workspace layout manager into smaller modules so UI code, persistence, and grading operations are easier to test independently.
 
 ## Reference
 
